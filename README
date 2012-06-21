@@ -1,0 +1,30 @@
+RPC-ExtDirect-Client
+====================
+
+This module implements Ext.Direct client in pure Perl. Its main purpose
+is to be used for testing server side Ext.Direct classes.
+
+RPC::ExtDirect::Client uses HTTP::Tiny as transport.
+
+INSTALLATION
+
+To install this module type the following:
+
+   perl Makefile.PL
+   make
+   make test
+   make install
+
+DEPENDENCIES
+
+This module requires these other modules and libraries:
+
+HTTP::Tiny, JSON.
+
+COPYRIGHT AND LICENSE
+
+Copyright (C) 2012 by Alexander Tokarev
+
+This library is free software; you can redistribute it and/or modify
+it under the same terms as Perl itself. See perlartistic.
+
