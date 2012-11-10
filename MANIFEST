@@ -8,6 +8,8 @@ t/03_post.t
 t/04_form.t
 t/05_upload.t
 t/06_poll.t
+t/07_cookie_jar.t
+t/08_cookies.t
 t/pod.t
 t/htdocs/.placeholder
 t/lib/util.pm

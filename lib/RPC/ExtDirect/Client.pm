@@ -11,7 +11,7 @@ use RPC::ExtDirect::Client::API;
 
 ### VERSION ###
 
-our $VERSION = '0.01';
+our $VERSION = '0.2';
 
 ### PUBLIC CLASS METHOD (CONSTRUCTOR) ###
 #
@@ -55,13 +55,13 @@ sub new {
 sub call {
     my ($self, %params) = @_;
 
-    my $action = $params{action};
-    my $method = $params{method};
-    my $arg    = $params{arg};
+    my $action = delete $params{action};
+    my $method = delete $params{method};
+    my $arg    = delete $params{arg};
 
     my $actual_arg = $self->_normalize_arg($action, $method, $arg);
 
-    my $response = $self->_call_sync($action, $method, $actual_arg);
+    my $response = $self->_call_sync($action, $method, $actual_arg, \%params);
 
     # We're only interested in the data
     return ref($response) =~ /Exception/ ? $response
@@ -99,9 +99,9 @@ sub submit {
 #
 
 sub poll {
-    my ($self) = @_;
+    my ($self, %params) = @_;
 
-    my $response = $self->_call_poll();
+    my $response = $self->_call_poll(%params);
 
     return $response;
 }
@@ -253,14 +253,22 @@ sub _formalize_arg {
 #
 
 sub _call_sync {
-    my ($self, $action, $method, $arg) = @_;
+    my ($self, $action, $method, $arg, $p) = @_;
 
     my $uri       = $self->_get_uri('router');
-    my $params    = $self->{http_params};
+    my $params    = $self->{http_params} // {};
     my $post_body = $self->_encode_post_body($action, $method, $arg);
 
+    @$params{ keys %$p } = values %$p if $p;
+
+    my $options = {
+        content => $post_body,
+    };
+
+    $self->_parse_cookies($options, $params);
+
     my $transp = HTTP::Tiny->new(%$params);
-    my $resp   = $transp->post($uri, { content => $post_body });
+    my $resp   = $transp->post($uri, $options);
 
     return $self->_handle_response($resp);
 }
@@ -291,6 +299,11 @@ sub _call_form {
         content => $form_body,
     };
 
+    my $p = $self->{http_params} || {};
+    @$p{ keys %params } = values %params;
+
+    $self->_parse_cookies($options, $p);
+
     my $resp = HTTP::Tiny->new->post($uri, $options);
 
     return $self->_handle_response($resp);
@@ -302,11 +315,18 @@ sub _call_form {
 #
 
 sub _call_poll {
-    my ($self) = @_;
+    my ($self, %params) = @_;
 
     my $uri = $self->_get_uri('poll');
 
-    my $resp = HTTP::Tiny->new->get($uri);
+    my $options = {};
+
+    my $p = $self->{http_params} || {};
+    @$p{ keys %params } = values %params;
+
+    $self->_parse_cookies($options, $p);
+
+    my $resp = HTTP::Tiny->new->get($uri, $options);
 
     return $self->_handle_poll_response($resp);
 }
@@ -418,6 +438,7 @@ sub _handle_response {
     my $exclass = 'RPC::ExtDirect::Client::Exception';
 
     if ( $resp->{status} == 599 ) {
+
         # This means internal HTTP::Tiny error
         return $exclass->new({ type    => 'exception',
                                message => $resp->{content},
@@ -444,7 +465,8 @@ sub _handle_poll_response {
     my $ev = $self->_decode_response_body( $resp->{content} );
 
     # Poll provider has to return a null event if there are no events
-    # because returning empty response would break JavaScript client
+    # because returning empty response would break JavaScript client.
+    # But we don't have to follow that broken implementation here.
     return
         if ('HASH' ne ref $ev and 'ARRAY' ne ref $ev) or
            ('HASH' eq ref $ev and
@@ -477,6 +499,62 @@ sub _decode_response_body {
     };
 
     return JSON->new->utf8(1)->decode($json_text);
+}
+
+### PRIVATE INSTANCE METHOD ###
+#
+# Parse cookies if provided, creating Cookie headers
+#
+
+sub _parse_cookies {
+    my ($self, $to, $from) = @_;
+
+    my $cookie_jar = $from->{cookies};
+
+    return unless $cookie_jar;
+
+    my $cookies;
+
+    if ( 'HTTP::Cookies' eq ref $cookie_jar ) {
+        $cookies = $self->_parse_http_cookies($cookie_jar);
+    }
+    else {
+        $cookies = $self->_parse_raw_cookies($cookie_jar);
+    }
+
+    $to->{headers}->{Cookie} = $cookies if $cookies;
+}
+
+### PRIVATE INSTANCE METHOD ###
+#
+# Parse cookies from HTTP::Cookies object
+#
+
+sub _parse_http_cookies {
+    my ($self, $cookie_jar) = @_;
+
+    my @cookies;
+
+    $cookie_jar->scan(sub {
+        my ($v, $key, $value) = @_;
+
+        push @cookies, "$key=$value";
+    });
+
+    return \@cookies;
+}
+
+### PRIVATE INSTANCE METHOD ###
+#
+# Parse (or rather, normalize) cookies passed as a hashref
+#
+
+sub _parse_raw_cookies {
+    my ($self, $cookie_jar) = @_;
+
+    return [] unless 'HASH' eq ref $cookie_jar;
+
+    return [ map { join '=', $_ => $cookie_jar->{$_} } keys %$cookie_jar ];
 }
 
 # Tiny helper class
@@ -526,9 +604,10 @@ RPC::ExtDirect::Client - Ext.Direct client in Perl
  
  my $client = RPC::ExtDirect::Client->new(host => 'localhost');
  my $result = $client->call(
-    action => 'Action',
-    method => 'Method',
-    arg    => [ 'foo', 'bar' ],
+    action  => 'Action',
+    method  => 'Method',
+    arg     => [ 'foo', 'bar' ],
+    cookies => { foo => 'bar' },
  );
 
 =head1 DESCRIPTION
@@ -570,6 +649,12 @@ Default: 'Ext.app.REMOTING_API'.
 JavaScript variable name used to assign Ext.Direct polling API object to.
 Default: 'Ext.app.POLLING_API'.
 
+=item cookies
+
+Cookies to set when calling server side; can be either HTTP::Cookies object
+or a hashref containing key-value pairs. Setting this in constructor will
+pass the same cookies to all subsequent client calls.
+
 =item %other
 
 All other arguments are passed to HTTP::Tiny constructor. See L<HTTP::Tiny>
@@ -595,6 +680,10 @@ Ext.Direct Method name to call
 
 Ext.Direct Method arguments; use arrayref for methods that accept ordered
 parameters or hashref for named parameters.
+
+=item cookies
+
+Same as with constructor, but sets cookies for this particular call only.
 
 =back
 
@@ -622,6 +711,10 @@ Method arguments; for formHandlers it should always be a hashref.
 
 Arrayref of file names to upload.
 
+=item cookies
+
+Same as with constructor, but sets cookies for this particular call only.
+
 =back
 
 Returns either call Result or Exception.
@@ -633,6 +726,14 @@ Same as C<submit>.
 =item poll
 
 Polls server side for events, returns event data.
+
+=over 8
+
+=item cookies
+
+Same as with constructor, but sets cookies for this particular call only.
+
+=back
 
 =back
 

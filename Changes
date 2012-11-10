@@ -1,3 +1,7 @@
+0.2   Fri Nov  9 23:52:39 2012
+    - Added an option to pass cookies either with HTTP::Cookies object
+      or raw hashref
+
 0.01  Wed Jun 20 18:13:21 2012
 	- original version; code runs and tests pass but lacks documentation
 
