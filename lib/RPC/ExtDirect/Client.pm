@@ -41,33 +41,10 @@ sub new {
     # The rest of parameters apply to transport
     $self->{http_params} = { %params };
 
-    my $api_js = $self->get_api();
+    my $api_js = $self->_get_api();
     $self->_import_api($api_js);
 
     return $self;
-}
-
-### PUBLIC INSTANCE METHOD ###
-#
-# Receive API declaration from specified server,
-# parse it and return Client::API object
-#
-
-sub get_api {
-    my ($self) = @_;
-
-    my $uri    = $self->_get_uri('api');
-    my $params = $self->{http_params};
-
-    my $resp = HTTP::Tiny->new(%$params)->get($uri);
-
-    die "Can't download API declaration: $resp->{status}\n"
-        unless $resp->{success};
-
-    die "Empty API declaration\n"
-        unless length $resp->{content};
-
-    return $resp->{content};
 }
 
 ### PUBLIC INSTANCE METHOD ###
@@ -144,6 +121,29 @@ sub next_tid { $_[0]->{tid}++ }
 sub api { $_[0]->{api} }
 
 ############## PRIVATE METHODS BELOW ##############
+
+### PRIVATE INSTANCE METHOD ###
+#
+# Receive API declaration from specified server,
+# parse it and return Client::API object
+#
+
+sub _get_api {
+    my ($self) = @_;
+
+    my $uri    = $self->_get_uri('api');
+    my $params = $self->{http_params};
+
+    my $resp = HTTP::Tiny->new(%$params)->get($uri);
+
+    die "Can't download API declaration: $resp->{status}\n"
+        unless $resp->{success};
+
+    die "Empty API declaration\n"
+        unless length $resp->{content};
+
+    return $resp->{content};
+}
 
 ### PRIVATE INSTANCE METHOD ###
 #
