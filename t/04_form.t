@@ -33,7 +33,7 @@ use util;
 BEGIN { use_ok 'RPC::ExtDirect::Client' };
 
 # Port number as parameter means there's server listening elsewhere
-my $port = shift @ARGV // start_server(static_dir => 't/htdocs');
+my $port = shift @ARGV || start_server(static_dir => 't/htdocs');
 ok $port, 'Got port';
 
 my $cclass = 'RPC::ExtDirect::Client';

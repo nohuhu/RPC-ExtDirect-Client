@@ -172,7 +172,7 @@ sub is_formhandler { !!$_[0]->{formHandler} }
 # Read only getters
 #
 
-sub len         { $_[0]->{len} // 0    }
+sub len         { $_[0]->{len} || 0    }
 sub name        { $_[0]->{name}        }
 sub params      { $_[0]->{params}      }
 sub formHandler { $_[0]->{formHandler} }
@@ -189,7 +189,7 @@ RPC::ExtDirect::Client::API - Parse and interpret Ext.Direct API declarations
 
 =head1 SYNOPSIS
 
-This module is not intended to be used directly.
+To be added.
 
 =head1 AUTHOR
 
@@ -197,7 +197,7 @@ Alexander Tokarev E<lt>tokarev@cpan.orgE<gt>
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (c) 2012 Alexander Tokarev
+Copyright (c) 2012-2013 Alexander Tokarev
 
 This module is free software; you can redistribute it and/or modify it under
 the same terms as Perl itself. See L<perlartistic>.

@@ -1,3 +1,7 @@
+0.21  Wed Mar 27 22:15:03 2012
+    - Published get_api method. Made all code and tests runnable
+      under Perl 5.8.
+
 0.2   Fri Nov  9 23:52:39 2012
     - Added an option to pass cookies either with HTTP::Cookies object
       or raw hashref
