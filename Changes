@@ -1,3 +1,7 @@
+0.22  Fri Mar 29 18:35:48 2013
+    - Added handling for Methods that do not specify how they need
+      their parameters. We assume by-name without strict checking.
+
 0.21  Wed Mar 27 22:15:03 2013
     - Published get_api method. Made all code and tests runnable
       under Perl 5.8.

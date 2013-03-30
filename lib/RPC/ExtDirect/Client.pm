@@ -11,7 +11,7 @@ use RPC::ExtDirect::Client::API;
 
 ### VERSION ###
 
-our $VERSION = '0.21';
+our $VERSION = '0.22';
 
 ### PUBLIC CLASS METHOD (CONSTRUCTOR) ###
 #
@@ -215,7 +215,10 @@ sub _normalize_arg {
         my $len = $self->api->actions($action)->method($method)->len;
 
         @$result = splice @$arg, 0, $len;
-    };
+    }
+    else {
+        $result = $arg;
+    }
 
     return $result;
 }
