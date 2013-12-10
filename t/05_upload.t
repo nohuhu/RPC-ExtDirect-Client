@@ -40,7 +40,7 @@ ok $port, 'Got port';
 
 my $cclass = 'RPC::ExtDirect::Client';
 
-my $client = eval { $cclass->new(host => 'localhost', port => $port) };
+my $client = eval { $cclass->new(host => 'localhost', port => $port, api_path => '/extdirectapi', router_path => '/extdirectrouter',) };
 
 is     $@,      '',      "Didn't die";
 ok     $client,          'Got client object';
@@ -57,7 +57,8 @@ my $exp = [
 ];
 
 my $data = eval {
-    $client->submit( action => 'test', method => 'handle_upload',
+#    $client->submit( action => 'test', method => 'handle_upload',
+    $client->submit( action => 'Bar', method => 'bar_baz',
                      upload => \@files
     )
 };

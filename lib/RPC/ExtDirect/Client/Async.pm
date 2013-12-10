@@ -1,4 +1,4 @@
-package RPC::ExtDirect::Client;
+package RPC::ExtDirect::Client::Async;
 
 use strict;
 use warnings;
@@ -6,120 +6,183 @@ no  warnings 'uninitialized';
 
 use File::Spec;
 use HTTP::Tiny;
+use AnyEvent::HTTP;
+
+use parent 'RPC::ExtDirect::Client';
 
 use RPC::ExtDirect::Client::API;
 
-### VERSION ###
-
-our $VERSION = '0.3';
-
 ### PUBLIC CLASS METHOD (CONSTRUCTOR) ###
 #
-# Instantiate a new Client, connect to specified server
+# Instantiate a new Client, connect to the specified server
 # and initialize Ext.Direct API
 #
 
 sub new {
     my ($class, %params) = @_;
-
-    my @our_params = qw(
-        host port api_path router_path poll_path
-        remoting_var polling_var cv
-    );
-
-    my $self = bless { tid => 0 }, $class;
-
-    @$self{ @our_params } = delete @params{ @our_params };
-
-    # Reasonable defaults
-    $self->{api_path}     ||= '/api';
-    $self->{router_path}  ||= '/router';
-    $self->{poll_path}    ||= '/events';
-    $self->{remoting_var} ||= 'Ext.app.REMOTING_API';
-    $self->{polling_var}  ||= 'Ext.app.POLLING_API';
-
-    # The rest of parameters apply to the transport
-    $self->{http_params} = { %params };
-
-    $self->_init_api();
-
+    
+    # It is a good style to throw exceptions instead of returning errors,
+    # but in asynchronous code it's rather hard to do - you can't just
+    # die() when an error happened. Instead, we accept optional `cv`
+    # parameter that should be a live AnyEvent::CondVar that we will
+    # croak() upon.
+    # Besides croaking, this cv will be signaled when API becomes available,
+    # so that the caller can wait for it.
+    my $self = $class->SUPER::new(%params);
+    
+    $self->{exceptions} = [];
+    
     return $self;
 }
 
 ### PUBLIC INSTANCE METHOD ###
 #
-# Call specified Action's Method
+# Call specified Action's Method asynchronously
 #
 
-sub call {
+sub call_async {
     my ($self, %params) = @_;
-
+    
     my $action = delete $params{action};
     my $method = delete $params{method};
     my $arg    = delete $params{arg};
-
-    my $actual_arg = $self->_normalize_arg($action, $method, $arg);
-
-    my $response = $self->_call_sync($action, $method, $actual_arg, \%params);
-
-    # We're only interested in the data
-    return ref($response) =~ /Exception/ ? $response
-         :                                 $response->{result}
-         ;
+    my $cb     = delete $params{cb};
+    
+    die "Callback subroutine is required" unless 'CODE' eq ref $cb;
+    
+    my $exceptions = $self->{exceptions};
+    die join "\n", (@$exceptions, "\n") if @$exceptions;
+    
+    my $call_cb = sub {
+        my $actual_arg  = $self->_normalize_arg($action, $method, $arg);
+        my $response_cb = $self->_curry_response_cb($cb);
+    
+        $self->_call_async($action, $method, $actual_arg, $response_cb, \%params);
+    };
+    
+    if ($self->_api_ready) {
+        $call_cb->();
+    }
+    else {
+        $self->_queue_request($call_cb);
+    }
+    
+    return 1;
 }
 
 ### PUBLIC INSTANCE METHOD ###
 #
-# Submit a form to specified Action's Method
+# Call specified Action's Method asynchronously
+# This method is an alias for call_async, provided for
+# compatibility with the synchronous Client
 #
 
-sub submit {
+*call = *call_async;
+
+### PUBLIC INSTANCE METHOD ###
+#
+# Submit a form to specified Action's Method asynchronously
+#
+
+sub submit_async {
     my ($self, %params) = @_;
-
-    # Form calls do not support batching
-    my $response = $self->_call_form(%params);
-
-    # We're only interested in the data
-    return ref($response) =~ /Exception/ ? $response
-         :                                 $response->{result}
-         ;
+    
+    my $cb = delete $params{cb};
+    
+    die "Callback subroutine is required" unless 'CODE' eq ref $cb;
+    
+    my $exceptions = $self->{exceptions};
+    die join "\n", (@$exceptions, "\n") if @$exceptions;
+    
+    my $submit_cb = sub {
+        my $response_cb = $self->_curry_response_cb($cb);
+    
+        $self->_call_form_async(%params, cb => $response_cb);
+    };
+    
+    if ($self->_api_ready) {
+        $submit_cb->();
+    }
+    else {
+        $self->_queue_request($submit_cb);
+    };
+    
+    return 1;
 }
+
+### PUBLIC INSTANCE METHOD ###
+#
+# Submit a form to specified Action's Method in fashion
+# This is an alias for submit_async
+#
+
+*submit = *submit_async;
 
 ### PUBLIC INSTANCE METHOD ###
 #
 # Upload a file using POST form. Same as submit()
 #
 
-*upload = *submit;
+*upload_async = *submit;
+*upload       = *submit;
 
 ### PUBLIC INSTANCE METHOD ###
 #
-# Poll server for Ext.Direct events
+# Poll server for events asynchronously
 #
 
-sub poll {
+sub poll_async {
     my ($self, %params) = @_;
-
-    my $response = $self->_call_poll(%params);
-
-    return $response;
+    
+    my $cb = delete $params{cb};
+    
+    die "Callback subroutine is required" unless 'CODE' eq ref $cb;
+    
+    my $exceptions = $self->{exceptions};
+    die join "\n", (@$exceptions, "\n") if @$exceptions;
+    
+    my $poll_cb = sub {
+        $self->_call_poll_async(%params, cb => $cb);
+    };
+    
+    if ($self->_api_ready) {
+        $poll_cb->();
+    }
+    else {
+        $self->_queue_request($poll_cb);
+    };
+    
+    return 1;
 }
 
 ### PUBLIC INSTANCE METHOD ###
 #
-# Return next TID (transaction ID)
+# Poll server for Ext.Direct events
+# This is an alias for poll_async
 #
 
-sub next_tid { $_[0]->{tid}++ }
-
-### PUBLIC INSTANCE METHOD ###
-#
-# Read only getter
-#
-
-sub api { $_[0]->{api} }
+*poll = *poll_async;
 
 ############## PRIVATE METHODS BELOW ##############
+
+### PRIVATE INSTANCE METHOD ###
+#
+# Throw an exception using the condvar passed to the constructor,
+# or just set an error so the next async request would die() with it
+#
+
+sub _throw {
+    my ($self, $ex) = @_;
+    
+    my $cv = $self->{cv};
+    
+    if ($cv) {
+        $cv->croak($ex);
+    }
+    else {
+        push @{$self->{exceptions}}, $ex;
+    }
+}
 
 ### PRIVATE INSTANCE METHOD ###
 #
@@ -129,8 +192,29 @@ sub api { $_[0]->{api} }
 sub _init_api {
     my ($self) = @_;
     
-    my $api_js = $self->_get_api();
-    $self->_import_api($api_js);
+    # We want to be truly asynchronous, so instead of
+    # blocking on API retrieval, we create a request queue
+    # and return immediately. If any call/form/poll requests happen
+    # before we've got the API result back, we push them in the queue
+    # and wait for the API to arrive, then re-run the requests.
+    # After the API declaration has been retrieved, all subsequent
+    # requests run without queuing.
+    $self->{request_queue} = [];
+    
+    my $cv = $self->{cv};
+    
+    $self->_get_api(sub {
+        my ($api_js) = @_;
+        
+        $self->_import_api($api_js);
+        
+        my $queue = $self->{request_queue};
+        delete $self->{request_queue};
+        
+        $_->() for @$queue;
+        
+        $cv->end if 'AnyEvent::CondVar' eq ref $cv;
+    });
 }
 
 ### PRIVATE INSTANCE METHOD ###
@@ -140,165 +224,117 @@ sub _init_api {
 #
 
 sub _get_api {
-    my ($self) = @_;
+    my ($self, $cb) = @_;
 
+    my $cv     = $self->{cv};
     my $uri    = $self->_get_uri('api');
     my $params = $self->{http_params};
 
-    my $resp = HTTP::Tiny->new(%$params)->get($uri);
+    # Run additional checks before firing curried callback
+    my $api_cb = sub {
+        my ($content, $headers) = @_;
+        
+        $self->_throw("Can't download API declaration: $headers->{Status}\n")
+            unless $headers->{Success} ne '200';
 
-    die "Can't download API declaration: $resp->{status}\n"
-        unless $resp->{success};
-
-    die "Empty API declaration\n"
-        unless length $resp->{content};
-
-    return $resp->{content};
-}
-
-### PRIVATE INSTANCE METHOD ###
-#
-# Return URI for specified type of call
-#
-
-sub _get_uri {
-    my ($self, $type) = @_;
-
-    my $host = $self->{host};
-    my $port = $self->{port};
-
-    my $path = $type eq 'api'    ? $self->{api_path}
-             : $type eq 'router' ? $self->{router_path}
-             : $type eq 'poll'   ? $self->{poll_path}
-             :                     die "Unknown type $type\n"
-             ;
-
-    $path   =~ s{^/}{};
-
-    my $uri  = $port ? "http://$host:$port/$path"
-             :         "http://$host/$path"
-             ;
-
-    return $uri;
-}
-
-### PRIVATE INSTANCE METHOD ###
-#
-# Import specified API into global namespace
-#
-
-sub _import_api {
-    my ($self, $api_js) = @_;
-
-    # Readability shortcut
-    my $aclass = 'RPC::ExtDirect::Client::API';
-
-    my $api = $aclass->new($api_js);
-
-    $self->{api} = $api;
-}
-
-### PRIVATE INSTANCE METHOD ###
-#
-# Normalize passed arguments to conform to Method's spec
-#
-
-sub _normalize_arg {
-    my ($self, $action, $method, $arg) = @_;
-
-    my $named   = $self->api->actions($action)->method($method)->is_named;
-    my $ordered = $self->api->actions($action)->method($method)->is_ordered;
-
-    die "${action}->$method requires ordered (by position) arguments\n"
-        if $ordered and 'ARRAY' ne ref $arg;
-
-    die "${action}->$method requires named arguments\n"
-        if $named and 'HASH' ne ref $arg;
-
-    my $result;
-
-    if ( $named ) {
-        my $params = $self->api->actions($action)->method($method)->params;
-
-        @$result{ @$params } = @$arg{ @$params };
-    }
-    elsif ( $ordered ) {
-        my $len = $self->api->actions($action)->method($method)->len;
-
-        @$result = splice @$arg, 0, $len;
-    }
-    else {
-        $result = $arg;
-    }
-
-    return $result;
-}
-
-### PRIVATE INSTANCE METHOD ###
-#
-# Normalize passed arguments to submit as form POST
-#
-
-sub _formalize_arg {
-    my ($self, %params) = @_;
-
-    my $action = $params{action};
-    my $method = $params{method};
-    my $arg    = $params{arg};
-    my $upload = $params{upload};
-
-    my $fields = {
-        extAction => $action,
-        extMethod => $method,
-        extType   => 'rpc',
-        extTID    => $self->next_tid,
+        $self->_throw("Empty API declaration\n")
+            unless length $content;
+        
+        $cb->($content);
     };
+    
+    $cv->begin if 'AnyEvent::CondVar' eq ref $cv;
 
-    $fields->{extUpload} = 'true' if $upload;
-
-    @$fields{ keys %$arg } = values %$arg;
-
-    return $fields;
+    AnyEvent::HTTP::http_request(
+        GET => $uri,
+        %$params,
+        $api_cb,
+    );
 }
 
 ### PRIVATE INSTANCE METHOD ###
 #
-# Calls Action's Method in synchronous fashion
+# Return true if the API is ready and requests can be dispatched
+# without queuing
 #
 
-sub _call_sync {
-    my ($self, $action, $method, $arg, $p) = @_;
+sub _api_ready {
+    my ($self) = @_;
+    
+    return ref($self->{api}) eq 'RPC::ExtDirect::Client::API';
+}
 
+### PRIVATE INSTANCE METHOD ###
+#
+# Queue asynchronous request
+#
+
+sub _queue_request {
+    my ($self, $req) = @_;
+    
+    my $queue = $self->{request_queue};
+    
+    push @$queue, $req;
+}
+
+### PRIVATE INSTANCE METHOD ###
+#
+# Call Action's Method in asynchronous fashion
+#
+
+sub _call_async {
+    my ($self, $action, $method, $actual_arg, $response_cb, $p) = @_;
+    
     my $uri       = $self->_get_uri('router');
     my $params    = $self->{http_params} || {};
-    my $post_body = $self->_encode_post_body($action, $method, $arg);
-
+    my $post_body = $self->_encode_post_body($action, $method, $actual_arg);
+    
     @$params{ keys %$p } = values %$p if $p;
-
-    my $options = {
-        content => $post_body,
-    };
-
+    
+    my $options = {};
+    
     $self->_parse_cookies($options, $params);
+    
+    my $headers = $options->{headers} || {};
+    $headers->{'Content-Type'} = 'application/octet-stream';
+    
+    # TODO Handle errors
+    my $result_cb = $self->_curry_result_cb($response_cb);
+    
+    AnyEvent::HTTP::http_request(
+        POST    => $uri,
+        headers => $headers,
+        body    => $post_body,
+        %$params,
+        $result_cb,
+    );
+}
 
-    my $transp = HTTP::Tiny->new(%$params);
-    my $resp   = $transp->post($uri, $options);
+### PRIVATE PACKAGE SUBROUTINE ###
+#
+# Cleanse Response
+#
 
-    return $self->_handle_response($resp);
+sub _cleanse_response {
+    my ($resp) = @_;
+    
+    # We're only interested in the data
+    return 'HASH' eq ref $resp ? $resp->{result} : $resp;
 }
 
 ### PRIVATE INSTANCE METHOD ###
 #
-# Call Action's Method by submitting a form
+# Call Action's Method by submitting a form in asynchronous fashion
 #
 
-sub _call_form {
+sub _call_form_async {
     my ($self, %params) = @_;
-
-    my $uri    = $self->_get_uri('router');
-    my $fields = $self->_formalize_arg(%params);
-    my $upload = $params{upload};
-
+    
+    my $resp_cb = delete $params{cb};
+    my $upload  = $params{upload};
+    my $uri     = $self->_get_uri('router');
+    my $fields  = $self->_formalize_arg(%params);
+    
     my $ct = $upload ? 'multipart/form-data; boundary='.$self->_get_boundary
            :           'application/x-www-form-urlencoded; charset=utf-8'
            ;
@@ -306,124 +342,51 @@ sub _call_form {
                   :           $self->_www_form_urlencode($fields)
                   ;
 
-    my $options = {
-        headers => {
-            'Content-Type' => $ct,
-        },
-        content => $form_body,
-    };
-
-    my $p = $self->{http_params} || {};
-    @$p{ keys %params } = values %params;
-
-    $self->_parse_cookies($options, $p);
-
-    my $resp = HTTP::Tiny->new->post($uri, $options);
-
-    return $self->_handle_response($resp);
-}
-
-### PRIVATE INSTANCE METHOD ###
-#
-# Call Ext.Direct polling provider
-#
-
-sub _call_poll {
-    my ($self, %params) = @_;
-
-    my $uri = $self->_get_uri('poll');
-
     my $options = {};
+    my $p = $self->{http_params} || {};
+    @$p{ keys %params } = values %params;
+    
+    $self->_parse_cookies($options, $p);
+    
+    my $headers = $options->{headers} || {};
+    $headers->{'Content-Type'} = $ct;
+    
+    my $result_cb = $self->_curry_result_cb($resp_cb);
+    
+    AnyEvent::HTTP::http_request(
+        POST    => $uri,
+        headers => $headers,
+        body    => $form_body,
+        %$p,
+        $result_cb,
+    );
+}
 
+### PRIVATE INSTANCE METHOD ###
+#
+# Call polling provider in asynchronous fashion
+#
+
+sub _call_poll_async {
+    my ($self, %params) = @_;
+    
+    my $resp_cb = delete $params{cb};
+    my $uri     = $self->_get_uri('poll');
+    
+    my $options = {};
+    
     my $p = $self->{http_params} || {};
     @$p{ keys %params } = values %params;
 
     $self->_parse_cookies($options, $p);
 
-    my $resp = HTTP::Tiny->new->get($uri, $options);
-
-    return $self->_handle_poll_response($resp);
-}
-
-### PRIVATE INSTANCE METHOD ###
-#
-# Create POST payload body
-#
-
-sub _encode_post_body {
-    my ($self, $action, $method, $arg) = @_;
-
-    my $href = {
-        action => $action,
-        method => $method,
-        data   => $arg,
-        type   => 'rpc',
-        tid    => $self->next_tid,
-    };
-
-    return JSON->new->utf8(1)->encode($href);
-}
-
-### PRIVATE INSTANCE METHOD ###
-#
-# Encode form fields as multipart/form-data
-#
-
-sub _www_form_multipart {
-    my ($self, $arg, $uploads) = @_;
-
-    # This code is shamelessly "adapted" from CGI::Test::Input::Multipart
-    my $CRLF     = "\015\012";
-    my $boundary = '--' . $self->_get_boundary();
-    my $format   = 'Content-Disposition: form-data; name="%s"';
-
-    my $result;
-
-    while ( my ($field, $value) = each %$arg ) {
-        $result .= $boundary                . $CRLF;
-        $result .= sprintf($format, $field) . $CRLF.$CRLF;
-        $result .= $value                   . $CRLF;
-    };
-
-    while ( $uploads && @$uploads ) {
-        my $filename = shift @$uploads;
-        my $basename = (File::Spec->splitpath($filename))[2];
-
-        $result .= $boundary                                . $CRLF;
-        $result .= sprintf $format, 'upload';
-        $result .= sprintf('; filename="%s"', $basename)    . $CRLF;
-        $result .= "Content-Type: application/octet-stream" . $CRLF.$CRLF;
-
-        if ( open my $fh, '<', $filename ) {
-            binmode $fh;
-            local $/;
-
-            $result .= <$fh> . $CRLF;
-        };
-    }
-
-    $result .= $boundary . '--' if $result;
-
-    return $result;
-}
-
-### PRIVATE INSTANCE METHOD ###
-#
-# Generate multipart/form-data boundary
-#
-
-my $boundary;
-
-sub _get_boundary {
-    return $boundary if $boundary;
+    my $result_cb = $self->_curry_result_cb($resp_cb, 1);
     
-    my $rand;
-
-    for ( 0..19 ) {
-        $rand .= (0..9, 'A'..'Z')[$_] for int rand 36;
-    };
-
-    return $boundary = $rand;
+    AnyEvent::HTTP::http_request(
+        GET => $uri,
+        %$p,
+        $result_cb,
+    );
 }
 
 ### PRIVATE INSTANCE METHOD ###
@@ -453,10 +416,10 @@ sub _handle_response {
 
     if ( $resp->{status} == 599 ) {
 
-        # This means internal HTTP::Tiny error
+        # This means internal transport module error
         return $exclass->new({ type    => 'exception',
                                message => $resp->{content},
-                               where   => 'HTTP::Tiny',
+                               where   => 'Transport',
                             });
     };
 
@@ -477,7 +440,7 @@ sub _handle_poll_response {
     my ($self, $resp) = @_;
 
     my $ev = $self->_decode_response_body( $resp->{content} );
-
+    
     # Poll provider has to return a null event if there are no events
     # because returning empty response would break JavaScript client.
     # But we don't have to follow that broken implementation here.
@@ -571,35 +534,49 @@ sub _parse_raw_cookies {
     return [ map { join '=', $_ => $cookie_jar->{$_} } keys %$cookie_jar ];
 }
 
-# Tiny helper class
-package
-    RPC::ExtDirect::Client::Exception;
-
-use overload
-    '""' => \&stringify
-    ;
-
-### PUBLIC CLASS METHOD (CONSTRUCTOR) ###
+### PRIVATE INSTANCE METHOD ###
 #
-# Instantiate a new Exception
+# Generate response handling callback
 #
 
-sub new {
-    my ($class, $ex) = @_;
-
-    return bless $ex, $class;
+sub _curry_response_cb {
+    my ($self, $cb) = @_;
+    
+    return sub {
+        my ($response) = @_;
+        
+        my $result = _cleanse_response($response);
+        
+        $cb->($result);
+    };
 }
 
-### PUBLIC INSTANCE METHOD ###
+### PRIVATE INSTANCE METHOD ###
 #
-# Return stringified Exception
+# Generate result handling callback
 #
 
-sub stringify {
-    my ($self) = @_;
-
-    return sprintf "Exception %s in %s",
-                   $self->{message}, $self->{where};
+sub _curry_result_cb {
+    my ($self, $cb, $is_poll) = @_;
+    
+    my $handler = $is_poll ? '_handle_poll_response'
+                :            '_handle_response'
+                ;
+    
+    return sub {
+        my ($data, $headers) = @_;
+        
+        my $status  = $headers->{Status};
+        my $success = $status eq '200';
+        
+        my $result = $self->$handler({
+            status  => $status,
+            success => $status eq '200',
+            content => $data,
+        });
+        
+        $cb->($result, $success);
+    };
 }
 
 1;
