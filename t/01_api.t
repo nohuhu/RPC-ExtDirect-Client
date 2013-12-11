@@ -4,16 +4,18 @@ use strict;
 use warnings;
 no  warnings 'uninitialized';
 
-use Test::More tests => 105;
+use RPC::ExtDirect::Config;
+
+use Test::More tests => 93;
 
 BEGIN { use_ok 'RPC::ExtDirect::Client::API' };
 
 my $source_js = <<'END_JS';
-Ext.app.REMOTING_API = {
+REMOTING_API = {
     "actions":{
         "Bar":[
                 { "len":5, "name":"bar_bar" },
-                { "formHandler":true, "len":0, "name":"bar_baz" },
+                { "formHandler":true, "name":"bar_baz" },
                 { "len":4, "name":"bar_foo" }
               ],
         "Foo":[
@@ -36,10 +38,20 @@ Ext.app.REMOTING_API = {
 };
 END_JS
 
+my $config = RPC::ExtDirect::Config->new(
+    remoting_var => 'REMOTING_API',
+);
+
 my $aclass = 'RPC::ExtDirect::Client::API';
 
-my $api = $aclass->new($source_js);
+my $api = eval {
+    $aclass->new_from_js(
+        config => $config,
+        js     => $source_js,
+    )
+};
 
+is     $@,   '',      "Constructor eval $@";
 ok     $api,          'Got object';
 isa_ok $api, $aclass, 'Right object, too,';
 
@@ -49,51 +61,51 @@ is $api->url,  '/extdirectrouter', 'URL';
 my @tests = (
     { name    => 'Bar',
       methods => [
-        { name => 'bar_bar', len => 5, is_named => '', is_ordered => 1,
-          is_formhandler => '', formHandler => undef, params => undef, },
-        { name => 'bar_baz', len => 0, is_named => '', is_ordered => '',
-          is_formhandler => 1, formHandler => 1, params => undef, },
-        { name => 'bar_foo', len => 4, is_named => '', is_ordered => 1,
-          is_formhandler => '', formHandler => undef, params => undef, },
+        { name => 'bar_bar', len => 5, is_named => !1, is_ordered => 1,
+          formHandler => undef, params => undef, },
+        { name => 'bar_baz', len => undef, is_named => !1, is_ordered => !1,
+          formHandler => 1, params => undef, },
+        { name => 'bar_foo', len => 4, is_named => !1, is_ordered => 1,
+          formHandler => undef, params => undef, },
       ],
     },
     { name    => 'Foo',
       methods => [
-        { name => 'foo_bar', len => 2, is_named => '', is_ordered => 1,
-          is_formhandler => '', formHandler => undef, params => undef, },
-        { name => 'foo_baz', len => 0, is_named => 1, is_ordered => '',
-          is_formhandler => '', formHandler => undef,
-          params => [ 'foo', 'bar', 'baz' ],
+        { name => 'foo_bar', len => 2, is_named => !1, is_ordered => 1,
+          formHandler => undef, params => undef, },
+        { name => 'foo_baz', len => undef, is_named => 1, is_ordered => !1,
+          formHandler => undef, params => [ 'foo', 'bar', 'baz' ],
         },
-        { name => 'foo_foo', len => 1, is_named => '', is_ordered => 1,
-          is_formhandler => '', formHandler => undef, params => undef, },
-        { name => 'foo_zero', len => 0, is_named => '', is_ordered => '',
-          is_formhandler => '', formHandler => undef, params => undef, },
+        { name => 'foo_foo', len => 1, is_named => !1, is_ordered => 1,
+          formHandler => undef, params => undef, },
+        { name => 'foo_zero', len => 0, is_named => !1, is_ordered => 1,
+          formHandler => undef, params => undef, },
       ],
     },
     { name    => 'Qux',
       methods => [
-        { name => 'bar_bar', len => 5, is_named => '', is_ordered => 1,
-          is_formhandler => '', formHandler => undef, params => undef, },
-        { name => 'bar_baz', len => 0, is_named => '', is_ordered => '',
-          is_formhandler => 1, formHandler => 1, params => undef, },
-        { name => 'bar_foo', len => 4, is_named => '', is_ordered => 1,
-          is_formhandler => '', formHandler => undef, params => undef, },
-        { name => 'foo_bar', len => 2, is_named => '', is_ordered => 1,
-          is_formhandler => '', formHandler => undef, params => undef, },
-        { name => 'foo_baz', len => 0, is_named => 1, is_ordered => '',
-          is_formhandler => '', formHandler => undef,
-          params => [ 'foo', 'bar', 'baz' ],
+        { name => 'bar_bar', len => 5, is_named => !1, is_ordered => 1,
+          formHandler => undef, params => undef, },
+        { name => 'bar_baz', len => 0, is_named => !1, is_ordered => 1,
+          formHandler => 1, params => undef, },
+        { name => 'bar_foo', len => 4, is_named => !1, is_ordered => 1,
+          formHandler => undef, params => undef, },
+        { name => 'foo_bar', len => 2, is_named => !1, is_ordered => 1,
+          formHandler => undef, params => undef, },
+        { name => 'foo_baz', len => undef, is_named => 1, is_ordered => !1,
+          formHandler => undef, params => [ 'foo', 'bar', 'baz' ],
         },
-        { name => 'foo_foo', len => 1, is_named => '', is_ordered => 1,
-          is_formhandler => '', formHandler => undef, params => undef, },
+        { name => 'foo_foo', len => 1, is_named => !1, is_ordered => 1,
+          formHandler => undef, params => undef, },
       ],
     },
 );
 
+my $sort_actions = sub { $a->name cmp $b->name };
+
 # Test all actions at once
 
-my @actions = sort { $a->name cmp $b->name } $api->actions;
+my @actions = sort $sort_actions $api->actions;
 
 for my $action ( @actions ) {
     my $test = shift @tests;
@@ -122,7 +134,7 @@ for my $action ( @actions ) {
 
 # Test returning a sliced set of actions
 
-@actions = sort { $a->name cmp $b->name } $api->actions('Qux', 'Foo');
+@actions = sort $sort_actions $api->actions('Qux', 'Foo');
 
 is scalar @actions,   2,     'Number of sliced actions';
 is $actions[0]->name, 'Foo', 'First sliced action name';
@@ -132,7 +144,7 @@ is $actions[1]->name, 'Qux', 'Second sliced action name';
 
 my $action = $api->actions('Bar');
 
-my $act_class = 'RPC::ExtDirect::Client::API::Action';
+my $act_class = 'RPC::ExtDirect::API::Action';
 
 ok     $action,                   'Got single action object';
 isa_ok $action,       $act_class, 'Right single action object class, too,';

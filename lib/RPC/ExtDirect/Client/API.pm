@@ -7,6 +7,7 @@ no  warnings 'uninitialized';   ## no critic
 use JSON;
 
 use RPC::ExtDirect::Util::Accessor;
+use RPC::ExtDirect::Config;
 use RPC::ExtDirect::API;
 
 use base 'RPC::ExtDirect::API';
@@ -19,17 +20,55 @@ use base 'RPC::ExtDirect::API';
 sub new_from_js {
     my ($class, %params) = @_;
     
-    my $js       = delete $params{js};
-    my $api_json = _strip_js($js);
+    my $config = delete $params{config} || RPC::ExtDirect::Config->new();
+    my $js     = delete $params{js};
+    
+    my $api_json = _strip_js($js, $config->remoting_var);
     my $api_href = _decode_api($api_json);
     
     my $self = $class->SUPER::new_from_hashref(
-        api_href => $api_href,
+        config   => $config,
+        api_href => $api_href->{actions},
+        type     => $api_href->{type},
+        url      => $api_href->{url},
         %params,
     );
     
     return $self;
 }
+
+### PUBLIC INSTANCE METHOD ###
+#
+# Return an Action object or a list of Action objects, depending on context
+#
+
+sub actions {
+    my ($self, @actions) = @_;
+
+    if ( wantarray ) {
+        my @set = @actions ? @actions
+                :            keys %{ $self->{actions} }
+                ;
+        
+        my @result = map { $self->get_action_by_name($_) } @set;
+
+        return @result;
+    }
+    else {
+        my $action_name = shift @actions;
+        
+        return $self->get_action_by_name($action_name);
+    };
+}
+
+### PUBLIC INSTANCE METHODS ###
+#
+# Read-write accessors
+#
+
+RPC::ExtDirect::Util::Accessor->mk_accessors(
+    simple => [qw/ type url /],
+);
 
 ############## PRIVATE METHODS BELOW ##############
 
@@ -68,7 +107,7 @@ sub _decode_api {
     die "Can't decode API declaration: $@\n" if $@;
 
     die "Empty API declaration\n"
-        unless 'HASH' eq ref $api;
+        unless 'HASH' eq ref $api_js;
 
     die "Unsupported API type\n"
         unless $api_js->{type} =~ /remoting/i;
@@ -80,7 +119,9 @@ sub _decode_api {
     my %remote_actions
         = map { $_ => _convert_action($actions->{$_}) } keys %$actions;
     
-    return \%remote_actions;
+    $api_js->{actions} = \%remote_actions;
+    
+    return $api_js;
 }
 
 ### PRIVATE PACKAGE SUBROUTINE ###
