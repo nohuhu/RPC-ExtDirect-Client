@@ -29,7 +29,14 @@ ok $port, 'Got port';
 
 my $cclass = 'RPC::ExtDirect::Client';
 
-my $client = eval { $cclass->new(host => 'localhost', port => $port) };
+my $client = eval {
+    $cclass->new(
+        host        => 'localhost',
+        port        => $port,
+        api_path    => '/api',
+        router_path => '/router',
+    )
+};
 
 is     $@,      '',      "Didn't die";
 ok     $client,          'Got client object';
@@ -48,7 +55,7 @@ like $data,     qr/not found/, 'Nonexistent description matches';
 # Try calling method that dies
 
 $data = eval {
-    $client->call( action => 'test', method => 'dies' )
+    $client->call( action => 'test', method => 'dies', arg => [], )
 };
 
 is   $@,        '',             "Method call didn't die";

@@ -38,7 +38,15 @@ ok $port, 'Got port';
 
 my $cclass = 'RPC::ExtDirect::Client';
 
-my $client = eval { $cclass->new(host => 'localhost', port => $port) };
+my $client = eval {
+    $cclass->new(
+        host        => 'localhost',
+        port        => $port,
+        api_path    => '/api',
+        router_path => '/router',
+        poll_path   => '/events',
+    )
+};
 
 is     $@,      '',      "Didn't die";
 ok     $client,          'Got client object';

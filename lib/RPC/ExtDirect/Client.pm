@@ -4,14 +4,28 @@ use strict;
 use warnings;
 no  warnings 'uninitialized';
 
+use Carp;
+
 use File::Spec;
 use HTTP::Tiny;
 
+use RPC::ExtDirect::Config;
 use RPC::ExtDirect::Client::API;
+use RPC::ExtDirect;
 
-### VERSION ###
+#
+# This module is not compatible with RPC::ExtDirect < 3.0
+#
 
-our $VERSION = '0.3';
+croak "RPC::ExtDirect::Client requires RPC::ExtDirect 3.0+"
+    if $RPC::ExtDirect::VERSION < 3.0;
+
+### PACKAGE GLOBAL VARIABLE ###
+#
+# Module version
+#
+
+our $VERSION = '3.00_01';
 
 ### PUBLIC CLASS METHOD (CONSTRUCTOR) ###
 #
@@ -21,28 +35,41 @@ our $VERSION = '0.3';
 
 sub new {
     my ($class, %params) = @_;
-
-    my @our_params = qw(
-        host port api_path router_path poll_path
-        remoting_var polling_var cv
+    
+    my $config = delete $params{config} || RPC::ExtDirect::Config->new();
+    my $api    = delete $params{api};
+    
+    $config->add_accessors(
+        overwrite => 1,
+        simple => ['api_class'],
     );
-
-    my $self = bless { tid => 0 }, $class;
-
+    
+    $config->api_class('RPC::ExtDirect::Client::API')
+        unless $config->has_api_class;
+    
+    my @config_params = qw/
+        api_path router_path poll_path remoting_var polling_var
+    /;
+    
+    for my $key ( @config_params ) {
+        $config->$key( delete $params{ $key } )
+            if exists $params{ $key };
+    }
+    
+    my $self = bless {
+        config => $config,
+        tid    => 0,
+    }, $class;
+    
+    my @our_params = qw/ host port cv cookies /;
+    
     @$self{ @our_params } = delete @params{ @our_params };
-
-    # Reasonable defaults
-    $self->{api_path}     ||= '/api';
-    $self->{router_path}  ||= '/router';
-    $self->{poll_path}    ||= '/events';
-    $self->{remoting_var} ||= 'Ext.app.REMOTING_API';
-    $self->{polling_var}  ||= 'Ext.app.POLLING_API';
-
+    
     # The rest of parameters apply to the transport
     $self->{http_params} = { %params };
-
-    $self->_init_api();
-
+    
+    $self->_init_api($api);
+    
     return $self;
 }
 
@@ -58,7 +85,12 @@ sub call {
     my $method = delete $params{method};
     my $arg    = delete $params{arg};
 
-    my $actual_arg = $self->_normalize_arg($action, $method, $arg);
+    my $actual_arg = eval { $self->_normalize_arg($action, $method, $arg) };
+    
+    return $self->_exception(
+        where   => 'RPC::ExtDirect::Client',
+        message => $@,
+    ) if $@;
 
     my $response = $self->_call_sync($action, $method, $actual_arg, \%params);
 
@@ -114,23 +146,46 @@ sub next_tid { $_[0]->{tid}++ }
 
 ### PUBLIC INSTANCE METHOD ###
 #
-# Read only getter
+# Read-write accessors
 #
 
-sub api { $_[0]->{api} }
+RPC::ExtDirect::Util::Accessor->mk_accessor(
+    simple => [qw/ api config host port cv cookies /],
+);
 
 ############## PRIVATE METHODS BELOW ##############
 
 ### PRIVATE INSTANCE METHOD ###
 #
-# Initialize API declaration
+# Create a new Exception object
+#
+
+sub _exception {
+    my ($self, %params) = @_;
+    
+    return RPC::ExtDirect::Client::Exception->new({ %params });
+}
+
+### PRIVATE INSTANCE METHOD ###
+#
+# Initialize API declaration.
+#
+# The two-step between _init_api and _import_api is to allow
+# async API retrieval and processing in Client::Async without
+# duplicating more code than is necessary
 #
 
 sub _init_api {
-    my ($self) = @_;
+    my ($self, $api) = @_;
     
-    my $api_js = $self->_get_api();
-    $self->_import_api($api_js);
+    if ( $api ) {
+        $self->api($api);
+    }
+    else {
+        my $api_js = $self->_get_api();
+        
+        $self->_import_api($api_js);
+    }
 }
 
 ### PRIVATE INSTANCE METHOD ###
@@ -163,13 +218,15 @@ sub _get_api {
 
 sub _get_uri {
     my ($self, $type) = @_;
+    
+    my $config = $self->config;
 
-    my $host = $self->{host};
-    my $port = $self->{port};
+    my $host = $self->host;
+    my $port = $self->port;
 
-    my $path = $type eq 'api'    ? $self->{api_path}
-             : $type eq 'router' ? $self->{router_path}
-             : $type eq 'poll'   ? $self->{poll_path}
+    my $path = $type eq 'api'    ? $config->api_path
+             : $type eq 'router' ? $config->router_path
+             : $type eq 'poll'   ? $config->poll_path
              :                     die "Unknown type $type\n"
              ;
 
@@ -189,13 +246,18 @@ sub _get_uri {
 
 sub _import_api {
     my ($self, $api_js) = @_;
-
-    # Readability shortcut
-    my $aclass = 'RPC::ExtDirect::Client::API';
-
-    my $api = $aclass->new($api_js);
-
-    $self->{api} = $api;
+        
+    my $config    = $self->config;
+    my $api_class = $config->api_class;
+    
+    eval "require $api_class";
+    
+    my $api = $api_class->new_from_js(
+        config => $config,
+        js     => $api_js,
+    );
+        
+    $self->api($api);
 }
 
 ### PRIVATE INSTANCE METHOD ###
@@ -204,26 +266,32 @@ sub _import_api {
 #
 
 sub _normalize_arg {
-    my ($self, $action, $method, $arg) = @_;
+    my ($self, $action_name, $method_name, $arg) = @_;
+    
+    my $api    = $self->api;
+    my $method = $api->get_method_by_name($action_name, $method_name);
+    
+    die "Method $method_name is not found in Action $action_name"
+        unless $method;
 
-    my $named   = $self->api->actions($action)->method($method)->is_named;
-    my $ordered = $self->api->actions($action)->method($method)->is_ordered;
+    my $named   = $method->is_named;
+    my $ordered = $method->is_ordered;
 
-    die "${action}->$method requires ordered (by position) arguments\n"
+    die "${action_name}->$method_name requires ordered (by position) arguments\n"
         if $ordered and 'ARRAY' ne ref $arg;
 
-    die "${action}->$method requires named arguments\n"
+    die "${action_name}->$method_name requires named arguments\n"
         if $named and 'HASH' ne ref $arg;
 
     my $result;
 
     if ( $named ) {
-        my $params = $self->api->actions($action)->method($method)->params;
+        my $params = $method->params;
 
         @$result{ @$params } = @$arg{ @$params };
     }
     elsif ( $ordered ) {
-        my $len = $self->api->actions($action)->method($method)->len;
+        my $len = $method->len;
 
         @$result = splice @$arg, 0, $len;
     }
@@ -274,6 +342,10 @@ sub _call_sync {
     my $post_body = $self->_encode_post_body($action, $method, $arg);
 
     @$params{ keys %$p } = values %$p if $p;
+    
+    if ( $self->cookies && !$params->{cookies} ) {
+        $params->{cookies} = $self->cookies;
+    }
 
     my $options = {
         content => $post_body,

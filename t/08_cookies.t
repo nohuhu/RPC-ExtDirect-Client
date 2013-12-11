@@ -70,9 +70,12 @@ my $expected_event = {
 };
 
 my $client = RPC::ExtDirect::Client->new(
-    host    => 'localhost',
-    port    => $port,
-    cookies => $expected_data,
+    host        => 'localhost',
+    port        => $port,
+    cookies     => $expected_data,
+    api_path    => '/api',
+    router_path => '/router',
+    poll_path   => '/events',
 );
 
 run_tests(
@@ -84,8 +87,11 @@ run_tests(
 );
 
 $client = RPC::ExtDirect::Client->new(
-    host => 'localhost',
-    port => $port,
+    host        => 'localhost',
+    port        => $port,
+    api_path    => '/api',
+    router_path => '/router',
+    poll_path   => '/events',
 );
 
 $expected_data = {
@@ -143,8 +149,11 @@ SKIP: {
     };
 
     $client = RPC::ExtDirect::Client->new(
-        host => 'localhost',
-        port => $port,
+        host        => 'localhost',
+        port        => $port,
+        api_path    => '/api',
+        router_path => '/router',
+        poll_path   => '/events',
     );
 
     run_tests(
@@ -168,6 +177,7 @@ sub run_tests {
     my $data = $client->call(
         action  => 'test',
         method  => 'ordered',
+        arg     => [],
         $cookie_jar ? (cookies => $cookie_jar) : (),
     );
 
