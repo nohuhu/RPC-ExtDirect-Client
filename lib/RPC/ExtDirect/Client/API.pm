@@ -23,8 +23,7 @@ sub new_from_js {
     my $config = delete $params{config} || RPC::ExtDirect::Config->new();
     my $js     = delete $params{js};
     
-    my $api_json = _strip_js($js, $config->remoting_var);
-    my $api_href = _decode_api($api_json);
+    my $api_href = _decode_api($js);
     
     my $self = $class->SUPER::new_from_hashref(
         config   => $config,
@@ -74,34 +73,14 @@ RPC::ExtDirect::Util::Accessor->mk_accessors(
 
 ### PRIVATE PACKAGE SUBROUTINE ###
 #
-# Extracts actual JSONified API declaration from JavaScript string
-#
-
-sub _strip_js {
-    my ($js, $remoting_var) = @_;
-
-    # We assume that the API definition is simple JavaScript
-    my @parts = split /;\s*/, $js;
-    
-    my ($api_def) = grep /^\s*$remoting_var\s*=\s*{/, @parts;
-    
-    die "Can't find the API definition for $remoting_var\n"
-        unless defined $api_def;
-    
-    # This should leave only the API object, more or less
-    $api_def =~ s/^\s*$remoting_var\s*=\s*//;
-
-    return $api_def;
-}
-
-### PRIVATE PACKAGE SUBROUTINE ###
-#
 # Decode API declaration and check basic constraints
 #
 
 sub _decode_api {
     my ($js) = @_;
 
+    $js =~ s/^[^{]+//;
+    
     my ($api_js) = eval { JSON->new->utf8(1)->decode_prefix($js) };
 
     die "Can't decode API declaration: $@\n" if $@;
@@ -110,7 +89,7 @@ sub _decode_api {
         unless 'HASH' eq ref $api_js;
 
     die "Unsupported API type\n"
-        unless $api_js->{type} =~ /remoting/i;
+        unless $api_js->{type} =~ /remoting|polling/i;
     
     # Convert the JavaScript API definition to the format
     # API::new_from_hashref expects

@@ -8,6 +8,7 @@ use RPC::ExtDirect  Action => 'test',
                     before => \&before_hook,
                     ;
 use RPC::ExtDirect::Event;
+use Test::More;
 
 our %cookies;
 
@@ -48,7 +49,6 @@ use strict;
 use warnings;
 no  warnings 'uninitialized';
 
-use RPC::ExtDirect::Client;
 use Test::More;
 
 eval {
@@ -59,7 +59,10 @@ if ( $@ ) {
     plan skip_all => "AnyEvent::HTTP not present";
 }
 else {
-    plan tests => 13;
+    require RPC::ExtDirect::Client::Async;
+
+    #plan tests => 13;
+    plan tests => 3;
 };
 
 use lib 't/lib';
@@ -69,8 +72,12 @@ use util;
 my $port = shift @ARGV || start_server(static_dir => 't/htdocs');
 ok $port, 'Got port';
 
-my $cv = AnyEvent->condvar;
 my $timeout = 1;
+my %client_params = (
+    host         => '127.0.0.1',
+    port         => $port,
+    api_path     => '/api',
+);
 
 my $expected_data = {
     foo => 'bar',
@@ -82,9 +89,8 @@ my $expected_event = {
     data => $expected_data,
 };
 
-my $client = RPC::ExtDirect::Client->new(
-    host    => 'localhost',
-    port    => $port,
+my $client = RPC::ExtDirect::Client::Async->new(
+    %client_params,
     cookies => $expected_data,
 );
 
@@ -96,10 +102,9 @@ run_tests(
     expected_event => $expected_event,
 );
 
-$client = RPC::ExtDirect::Client->new(
-    host => 'localhost',
-    port => $port,
-);
+exit 0;
+
+$client = RPC::ExtDirect::Client::Async->new( %client_params );
 
 $expected_data = {
     bar => 'foo',
@@ -155,10 +160,7 @@ SKIP: {
         data => $expected_data,
     };
 
-    $client = RPC::ExtDirect::Client->new(
-        host => 'localhost',
-        port => $port,
-    );
+    $client = RPC::ExtDirect::Client::Async->new( %client_params );
 
     run_tests(
         client         => $client,
@@ -169,8 +171,6 @@ SKIP: {
     );
 }
 
-$cv->recv;
-
 sub run_tests {
     my %params = @_;
 
@@ -180,11 +180,14 @@ sub run_tests {
     my $expected_data  = $params{expected_data};
     my $expected_event = $params{expected_event};
 
+    my $cv = AnyEvent->condvar;
+
     $cv->begin;
 
-    my $data = $client->call_async(
+    $client->call_async(
         action  => 'test',
         method  => 'ordered',
+        arg     => [],
         $cookie_jar ? (cookies => $cookie_jar) : (),
         timeout => $timeout,
         cb => sub {
@@ -199,7 +202,7 @@ sub run_tests {
 
     $cv->begin;
 
-    $data = $client->submit_async(
+    $client->submit_async(
         action  => 'test',
         method  => 'form',
         $cookie_jar ? (cookies => $cookie_jar) : (),
@@ -216,17 +219,19 @@ sub run_tests {
 
     $cv->begin;
 
-    my $event = $client->poll_async(
+    $client->poll_async(
         $cookie_jar ? (cookies => $cookie_jar) : (),
         timeout => $timeout,
         cb => sub {
             my $event = shift;
 
             is_deeply $event, $expected_event, "Poll handler with $desc"
-                or diag explain $data;
+                or diag explain $event;
     
             $cv->end;
         },
     );
+
+    $cv->recv;
 }
 

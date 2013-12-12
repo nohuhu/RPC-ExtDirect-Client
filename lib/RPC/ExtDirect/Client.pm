@@ -39,13 +39,13 @@ sub new {
     my $config = delete $params{config} || RPC::ExtDirect::Config->new();
     my $api    = delete $params{api};
     
-    $config->add_accessors(
-        overwrite => 1,
-        simple => ['api_class'],
-    );
+    my $self = bless {
+        config => $config,
+        api    => {},
+        tid    => 0,
+    }, $class;
     
-    $config->api_class('RPC::ExtDirect::Client::API')
-        unless $config->has_api_class;
+    $self->_decorate_config($config);
     
     my @config_params = qw/
         api_path router_path poll_path remoting_var polling_var
@@ -55,11 +55,6 @@ sub new {
         $config->$key( delete $params{ $key } )
             if exists $params{ $key };
     }
-    
-    my $self = bless {
-        config => $config,
-        tid    => 0,
-    }, $class;
     
     my @our_params = qw/ host port cv cookies /;
     
@@ -146,14 +141,59 @@ sub next_tid { $_[0]->{tid}++ }
 
 ### PUBLIC INSTANCE METHOD ###
 #
+# Return API object by its type
+#
+
+sub get_api {
+    my ($self, $type) = @_;
+    
+    return $self->{api}->{$type};
+}
+
+### PUBLIC INSTANCE METHOD ###
+#
+# Store the passed API object according to its type
+#
+
+sub set_api {
+    my ($self, $api) = @_;
+    
+    my $type = $api->type;
+    
+    $self->{api}->{$type} = $api;
+}
+
+### PUBLIC INSTANCE METHODS ###
+#
+# Read-only accessor delegates
+#
+
+sub remoting_var { $_[0]->config->remoting_var }
+sub polling_var  { $_[0]->config->polling_var  }
+
+### PUBLIC INSTANCE METHODS ###
+#
 # Read-write accessors
 #
 
 RPC::ExtDirect::Util::Accessor->mk_accessor(
-    simple => [qw/ api config host port cv cookies /],
+    simple => [qw/ config host port cv cookies /],
 );
 
 ############## PRIVATE METHODS BELOW ##############
+
+### PRIVATE INSTANCE METHOD ###
+#
+# Throw an exception. This method is overridden in
+# Client::Async to avoid calling die() directly since it breaks
+# the AnyEvent magic dust.
+#
+
+sub _throw {
+    my ($self, $ex) = @_;
+    
+    die "$ex\n";
+}
 
 ### PRIVATE INSTANCE METHOD ###
 #
@@ -163,7 +203,32 @@ RPC::ExtDirect::Util::Accessor->mk_accessor(
 sub _exception {
     my ($self, %params) = @_;
     
-    return RPC::ExtDirect::Client::Exception->new({ %params });
+    my $config  = $self->config;
+    my $exclass = $config->exception_class_client;
+    
+    eval "require $exclass";
+
+    return $exclass->new({ %params });
+}
+
+### PRIVATE INSTANCE METHOD ###
+#
+# Add the Client-specific accessors to a Config instance
+#
+
+sub _decorate_config {
+    my ($self, $config) = @_;
+    
+    $config->add_accessors(
+        overwrite => 1,
+        simple    => [qw/ api_class_client exception_class_client /],
+    );
+    
+    $config->api_class_client('RPC::ExtDirect::Client::API')
+        unless $config->has_api_class_client;
+    
+    $config->exception_class_client('RPC::ExtDirect::Client::Exception')
+        unless $config->has_exception_class_client;
 }
 
 ### PRIVATE INSTANCE METHOD ###
@@ -179,7 +244,7 @@ sub _init_api {
     my ($self, $api) = @_;
     
     if ( $api ) {
-        $self->api($api);
+        $self->set_api($api);
     }
     else {
         my $api_js = $self->_get_api();
@@ -202,13 +267,46 @@ sub _get_api {
 
     my $resp = HTTP::Tiny->new(%$params)->get($uri);
 
-    die "Can't download API declaration: $resp->{status}\n"
+    return $self->_throw("Can't download API declaration: $resp->{status}")
         unless $resp->{success};
 
-    die "Empty API declaration\n"
+    return $self->_throw("Empty API declaration")
         unless length $resp->{content};
 
     return $resp->{content};
+}
+
+### PRIVATE INSTANCE METHOD ###
+#
+# Import specified API into global namespace
+#
+
+sub _import_api {
+    my ($self, $api_js) = @_;
+    
+    my $config       = $self->config;
+    my $remoting_var = $config->remoting_var;
+    my $polling_var  = $config->polling_var;
+    my $api_class    = $config->api_class_client;
+    
+    eval "require $api_class";
+    
+    $api_js =~ s/\s*//gms;
+    
+    my @parts = split /;\s*/, $api_js;
+    
+    my $api_regex = qr/^\Q$remoting_var\E|\Q$polling_var\E/;
+    
+    for my $part ( @parts ) {
+        next unless $part =~ $api_regex;
+        
+        my $api = $api_class->new_from_js(
+            config => $config,
+            js     => $part,
+        );
+        
+        $self->set_api($api);
+    }
 }
 
 ### PRIVATE INSTANCE METHOD ###
@@ -220,14 +318,23 @@ sub _get_uri {
     my ($self, $type) = @_;
     
     my $config = $self->config;
-
+    
+    my $api;
+    
+    if ( $type eq 'remoting' || $type eq 'polling' ) {
+        $api = $self->get_api($type);
+    
+        die "Don't have API definition for type $type"
+            unless $api;
+    }
+    
     my $host = $self->host;
     my $port = $self->port;
 
-    my $path = $type eq 'api'    ? $config->api_path
-             : $type eq 'router' ? $config->router_path
-             : $type eq 'poll'   ? $config->poll_path
-             :                     die "Unknown type $type\n"
+    my $path = $type eq 'api'      ? $config->api_path
+             : $type eq 'remoting' ? $api->url || $config->router_path
+             : $type eq 'polling'  ? $api->url || $config->poll_path
+             :                       return $self->_throw("Unknown type $type")
              ;
 
     $path   =~ s{^/}{};
@@ -241,46 +348,26 @@ sub _get_uri {
 
 ### PRIVATE INSTANCE METHOD ###
 #
-# Import specified API into global namespace
-#
-
-sub _import_api {
-    my ($self, $api_js) = @_;
-        
-    my $config    = $self->config;
-    my $api_class = $config->api_class;
-    
-    eval "require $api_class";
-    
-    my $api = $api_class->new_from_js(
-        config => $config,
-        js     => $api_js,
-    );
-        
-    $self->api($api);
-}
-
-### PRIVATE INSTANCE METHOD ###
-#
 # Normalize passed arguments to conform to Method's spec
 #
 
 sub _normalize_arg {
     my ($self, $action_name, $method_name, $arg) = @_;
     
-    my $api    = $self->api;
+    my $api    = $self->get_api('remoting');
     my $method = $api->get_method_by_name($action_name, $method_name);
     
-    die "Method $method_name is not found in Action $action_name"
+    return $self->_throw("Method $method_name is not found in Action $action_name")
         unless $method;
 
     my $named   = $method->is_named;
     my $ordered = $method->is_ordered;
 
-    die "${action_name}->$method_name requires ordered (by position) arguments\n"
+    return $self->_throw("${action_name}->$method_name requires ".
+                        "ordered (by position) arguments")
         if $ordered and 'ARRAY' ne ref $arg;
 
-    die "${action_name}->$method_name requires named arguments\n"
+    return $self->_throw("${action_name}->$method_name requires named arguments")
         if $named and 'HASH' ne ref $arg;
 
     my $result;
@@ -337,7 +424,7 @@ sub _formalize_arg {
 sub _call_sync {
     my ($self, $action, $method, $arg, $p) = @_;
 
-    my $uri       = $self->_get_uri('router');
+    my $uri       = $self->_get_uri('remoting');
     my $params    = $self->{http_params} || {};
     my $post_body = $self->_encode_post_body($action, $method, $arg);
 
@@ -367,7 +454,7 @@ sub _call_sync {
 sub _call_form {
     my ($self, %params) = @_;
 
-    my $uri    = $self->_get_uri('router');
+    my $uri    = $self->_get_uri('remoting');
     my $fields = $self->_formalize_arg(%params);
     my $upload = $params{upload};
 
@@ -403,7 +490,7 @@ sub _call_form {
 sub _call_poll {
     my ($self, %params) = @_;
 
-    my $uri = $self->_get_uri('poll');
+    my $uri = $self->_get_uri('polling');
 
     my $options = {};
 
@@ -517,24 +604,25 @@ sub _www_form_urlencode {
 sub _handle_response {
     my ($self, $resp) = @_;
 
-    # By Ext.Direct spec it shouldn't even happen, but then again
-    die "Ext.Direct request unsuccessful: $resp->{status}\n"
+    # By Ext.Direct spec that shouldn't even happen, but then again
+    return $self->_throw("Ext.Direct request unsuccessful: $resp->{status}")
         unless $resp->{success};
-
-    my $exclass = 'RPC::ExtDirect::Client::Exception';
 
     if ( $resp->{status} == 599 ) {
 
         # This means internal HTTP::Tiny error
-        return $exclass->new({ type    => 'exception',
-                               message => $resp->{content},
-                               where   => 'HTTP::Tiny',
-                            });
+        return $self->_exception(
+                    message => $resp->{content},
+                    where   => 'Transport layer',
+                );
     };
 
-    my $content = $self->_decode_response_body( $resp->{content} );
+    my $content = eval { $self->_decode_response_body( $resp->{content} ) };
+    
+    return $self->_exception( message => $@, where => 'HTTP transport' )
+        if $@;
 
-    return $exclass->new($content)
+    return $self->_exception(%$content)
         if 'HASH' eq ref $content and $content->{type} eq 'exception';
 
     return $content;
@@ -548,7 +636,14 @@ sub _handle_response {
 sub _handle_poll_response {
     my ($self, $resp) = @_;
 
-    my $ev = $self->_decode_response_body( $resp->{content} );
+    $self->_throw("Ext.Direct request unsuccessful: $resp->{status}")
+        unless $resp->{success};
+
+    # JSON->decode can die()
+    my $ev = eval { $self->_decode_response_body( $resp->{content} ) };
+    
+    return $self->_exception( message => $@, where => 'HTTP transport' )
+        if $@;
 
     # Poll provider has to return a null event if there are no events
     # because returning empty response would break JavaScript client.
@@ -589,7 +684,7 @@ sub _decode_response_body {
 
 ### PRIVATE INSTANCE METHOD ###
 #
-# Parse cookies if provided, creating Cookie headers
+# Parse cookies if provided, creating Cookie header
 #
 
 sub _parse_cookies {
@@ -670,8 +765,8 @@ sub new {
 sub stringify {
     my ($self) = @_;
 
-    return sprintf "Exception %s in %s",
-                   $self->{message}, $self->{where};
+    return sprintf "Exception in %s: %s",
+                   $self->{where}, $self->{message};
 }
 
 1;

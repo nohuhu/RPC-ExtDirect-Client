@@ -4,13 +4,25 @@ use strict;
 use warnings;
 no  warnings 'uninitialized';
 
+use Carp;
 use File::Spec;
 use HTTP::Tiny;
 use AnyEvent::HTTP;
 
-use parent 'RPC::ExtDirect::Client';
+use RPC::ExtDirect::Util::Accessor;
+use RPC::ExtDirect::Config;
+use RPC::ExtDirect::API;
+use RPC::ExtDirect;
+use RPC::ExtDirect::Client;
 
-use RPC::ExtDirect::Client::API;
+use base 'RPC::ExtDirect::Client';
+
+#
+# This module is not compatible with RPC::ExtDirect < 3.0
+#
+
+croak "RPC::ExtDirect::Client requires RPC::ExtDirect 3.0+"
+    if $RPC::ExtDirect::VERSION < 3.0;
 
 ### PUBLIC CLASS METHOD (CONSTRUCTOR) ###
 #
@@ -47,11 +59,13 @@ sub call_async {
     my $method = delete $params{method};
     my $arg    = delete $params{arg};
     my $cb     = delete $params{cb};
+    my $cv     = delete $params{cv};
     
-    die "Callback subroutine is required" unless 'CODE' eq ref $cb;
+    $self->_throw("Callback subroutine is required in call_async")
+        unless 'CODE' eq ref $cb;
     
     my $exceptions = $self->{exceptions};
-    die join "\n", (@$exceptions, "\n") if @$exceptions;
+    $self->_throw(join "\n", @$exceptions, "\n") if @$exceptions;
     
     my $call_cb = sub {
         my $actual_arg  = $self->_normalize_arg($action, $method, $arg);
@@ -60,7 +74,7 @@ sub call_async {
         $self->_call_async($action, $method, $actual_arg, $response_cb, \%params);
     };
     
-    if ($self->_api_ready) {
+    if ($self->api_ready) {
         $call_cb->();
     }
     else {
@@ -72,15 +86,6 @@ sub call_async {
 
 ### PUBLIC INSTANCE METHOD ###
 #
-# Call specified Action's Method asynchronously
-# This method is an alias for call_async, provided for
-# compatibility with the synchronous Client
-#
-
-*call = *call_async;
-
-### PUBLIC INSTANCE METHOD ###
-#
 # Submit a form to specified Action's Method asynchronously
 #
 
@@ -89,10 +94,11 @@ sub submit_async {
     
     my $cb = delete $params{cb};
     
-    die "Callback subroutine is required" unless 'CODE' eq ref $cb;
+    $self->_throw("Callback subroutine is required in submit_async")
+        unless 'CODE' eq ref $cb;
     
     my $exceptions = $self->{exceptions};
-    die join "\n", (@$exceptions, "\n") if @$exceptions;
+    $self->_throw(join "\n", @$exceptions, "\n") if @$exceptions;
     
     my $submit_cb = sub {
         my $response_cb = $self->_curry_response_cb($cb);
@@ -100,7 +106,7 @@ sub submit_async {
         $self->_call_form_async(%params, cb => $response_cb);
     };
     
-    if ($self->_api_ready) {
+    if ($self->api_ready) {
         $submit_cb->();
     }
     else {
@@ -112,19 +118,10 @@ sub submit_async {
 
 ### PUBLIC INSTANCE METHOD ###
 #
-# Submit a form to specified Action's Method in fashion
-# This is an alias for submit_async
-#
-
-*submit = *submit_async;
-
-### PUBLIC INSTANCE METHOD ###
-#
 # Upload a file using POST form. Same as submit()
 #
 
-*upload_async = *submit;
-*upload       = *submit;
+*upload_async = *submit_async;
 
 ### PUBLIC INSTANCE METHOD ###
 #
@@ -136,16 +133,17 @@ sub poll_async {
     
     my $cb = delete $params{cb};
     
-    die "Callback subroutine is required" unless 'CODE' eq ref $cb;
+    $self->_throw("Callback subroutine is required in poll_async")
+        unless 'CODE' eq ref $cb;
     
     my $exceptions = $self->{exceptions};
-    die join "\n", (@$exceptions, "\n") if @$exceptions;
+    $self->_throw(join "\n", @$exceptions, "\n") if @$exceptions;
     
     my $poll_cb = sub {
         $self->_call_poll_async(%params, cb => $cb);
     };
     
-    if ($self->_api_ready) {
+    if ($self->api_ready) {
         $poll_cb->();
     }
     else {
@@ -157,11 +155,12 @@ sub poll_async {
 
 ### PUBLIC INSTANCE METHOD ###
 #
-# Poll server for Ext.Direct events
-# This is an alias for poll_async
+# Read-write accessor
 #
 
-*poll = *poll_async;
+RPC::ExtDirect::Util::Accessor->mk_accessor(
+    simple => [qw/ api_ready /],
+);
 
 ############## PRIVATE METHODS BELOW ##############
 
@@ -174,7 +173,7 @@ sub poll_async {
 sub _throw {
     my ($self, $ex) = @_;
     
-    my $cv = $self->{cv};
+    my $cv = $self->cv;
     
     if ($cv) {
         $cv->croak($ex);
@@ -201,12 +200,13 @@ sub _init_api {
     # requests run without queuing.
     $self->{request_queue} = [];
     
-    my $cv = $self->{cv};
+    my $cv = $self->cv;
     
     $self->_get_api(sub {
         my ($api_js) = @_;
         
         $self->_import_api($api_js);
+        $self->api_ready(1);
         
         my $queue = $self->{request_queue};
         delete $self->{request_queue};
@@ -226,7 +226,7 @@ sub _init_api {
 sub _get_api {
     my ($self, $cb) = @_;
 
-    my $cv     = $self->{cv};
+    my $cv     = $self->cv;
     my $uri    = $self->_get_uri('api');
     my $params = $self->{http_params};
 
@@ -254,18 +254,6 @@ sub _get_api {
 
 ### PRIVATE INSTANCE METHOD ###
 #
-# Return true if the API is ready and requests can be dispatched
-# without queuing
-#
-
-sub _api_ready {
-    my ($self) = @_;
-    
-    return ref($self->{api}) eq 'RPC::ExtDirect::Client::API';
-}
-
-### PRIVATE INSTANCE METHOD ###
-#
 # Queue asynchronous request
 #
 
@@ -285,12 +273,16 @@ sub _queue_request {
 sub _call_async {
     my ($self, $action, $method, $actual_arg, $response_cb, $p) = @_;
     
-    my $uri       = $self->_get_uri('router');
+    my $uri       = $self->_get_uri('remoting');
     my $params    = $self->{http_params} || {};
     my $post_body = $self->_encode_post_body($action, $method, $actual_arg);
     
     @$params{ keys %$p } = values %$p if $p;
     
+    if ( $self->cookies && !$params->{cookies} ) {
+        $params->{cookies} = $self->cookies;
+    }
+
     my $options = {};
     
     $self->_parse_cookies($options, $params);
@@ -332,7 +324,7 @@ sub _call_form_async {
     
     my $resp_cb = delete $params{cb};
     my $upload  = $params{upload};
-    my $uri     = $self->_get_uri('router');
+    my $uri     = $self->_get_uri('remoting');
     my $fields  = $self->_formalize_arg(%params);
     
     my $ct = $upload ? 'multipart/form-data; boundary='.$self->_get_boundary
@@ -346,6 +338,10 @@ sub _call_form_async {
     my $p = $self->{http_params} || {};
     @$p{ keys %params } = values %params;
     
+    if ( $self->cookies && !$p->{cookies} ) {
+        $p->{cookies} = $self->cookies;
+    }
+
     $self->_parse_cookies($options, $p);
     
     my $headers = $options->{headers} || {};
@@ -371,12 +367,16 @@ sub _call_poll_async {
     my ($self, %params) = @_;
     
     my $resp_cb = delete $params{cb};
-    my $uri     = $self->_get_uri('poll');
+    my $uri     = $self->_get_uri('polling');
     
     my $options = {};
     
     my $p = $self->{http_params} || {};
     @$p{ keys %params } = values %params;
+
+    if ( $self->cookies && !$p->{cookies} ) {
+        $p->{cookies} = $self->cookies;
+    }
 
     $self->_parse_cookies($options, $p);
 
@@ -391,147 +391,19 @@ sub _call_poll_async {
 
 ### PRIVATE INSTANCE METHOD ###
 #
-# Encode form fields as application/x-www-form-urlencoded
-#
-
-sub _www_form_urlencode {
-    my ($self, $arg) = @_;
-
-    return HTTP::Tiny->new->www_form_urlencode($arg);
-}
-
-### PRIVATE INSTANCE METHOD ###
-#
-# Process Ext.Direct response and return either data or exception
-#
-
-sub _handle_response {
-    my ($self, $resp) = @_;
-
-    # By Ext.Direct spec it shouldn't even happen, but then again
-    die "Ext.Direct request unsuccessful: $resp->{status}\n"
-        unless $resp->{success};
-
-    my $exclass = 'RPC::ExtDirect::Client::Exception';
-
-    if ( $resp->{status} == 599 ) {
-
-        # This means internal transport module error
-        return $exclass->new({ type    => 'exception',
-                               message => $resp->{content},
-                               where   => 'Transport',
-                            });
-    };
-
-    my $content = $self->_decode_response_body( $resp->{content} );
-
-    return $exclass->new($content)
-        if 'HASH' eq ref $content and $content->{type} eq 'exception';
-
-    return $content;
-}
-
-### PRIVATE INSTANCE METHOD ###
-#
-# Handle poll response
-#
-
-sub _handle_poll_response {
-    my ($self, $resp) = @_;
-
-    my $ev = $self->_decode_response_body( $resp->{content} );
-    
-    # Poll provider has to return a null event if there are no events
-    # because returning empty response would break JavaScript client.
-    # But we don't have to follow that broken implementation here.
-    return
-        if ('HASH' ne ref $ev and 'ARRAY' ne ref $ev) or
-           ('HASH' eq ref $ev and
-                ($ev->{name} eq '__NONE__' or $ev->{name} eq '' or
-                 $ev->{type} ne 'event')
-           )
-        ;
-
-    delete $_->{type} for 'ARRAY' eq ref $ev ? @$ev : ( $ev );
-
-    return $ev;
-}
-
-### PRIVATE INSTANCE METHOD ###
-#
-# Decode Ext.Direct response body
-#
-
-sub _decode_response_body {
-    my ($self, $body) = @_;
-
-    my $json_text = $body;
-
-    # Form POSTs require this additional handling
-    my $re = qr{^<html><body><textarea>(.*)</textarea></body></html>$}msi;
-
-    if ( $body =~ $re ) {
-        $json_text = $1;
-        $json_text =~ s{\\"}{"}g;
-    };
-
-    return JSON->new->utf8(1)->decode($json_text);
-}
-
-### PRIVATE INSTANCE METHOD ###
-#
-# Parse cookies if provided, creating Cookie headers
+# Parse cookies if provided, creating Cookie header
 #
 
 sub _parse_cookies {
     my ($self, $to, $from) = @_;
-
-    my $cookie_jar = $from->{cookies};
-
-    return unless $cookie_jar;
-
-    my $cookies;
-
-    if ( 'HTTP::Cookies' eq ref $cookie_jar ) {
-        $cookies = $self->_parse_http_cookies($cookie_jar);
+    
+    $self->SUPER::_parse_cookies($to, $from);
+    
+    # This results in Cookie header being a hashref,
+    # but we need a string for AnyEvent::HTTP
+    if ( $to->{headers} && (my $cookies = $to->{headers}->{Cookie}) ) {
+        $to->{headers}->{Cookie} = join '; ', @$cookies;
     }
-    else {
-        $cookies = $self->_parse_raw_cookies($cookie_jar);
-    }
-
-    $to->{headers}->{Cookie} = $cookies if $cookies;
-}
-
-### PRIVATE INSTANCE METHOD ###
-#
-# Parse cookies from HTTP::Cookies object
-#
-
-sub _parse_http_cookies {
-    my ($self, $cookie_jar) = @_;
-
-    my @cookies;
-
-    $cookie_jar->scan(sub {
-        my ($v, $key, $value) = @_;
-
-        push @cookies, "$key=$value";
-    });
-
-    return \@cookies;
-}
-
-### PRIVATE INSTANCE METHOD ###
-#
-# Parse (or rather, normalize) cookies passed as a hashref
-#
-
-sub _parse_raw_cookies {
-    my ($self, $cookie_jar) = @_;
-
-    return [] unless 'HASH' eq ref $cookie_jar;
-
-    return [ map { join '=', $_ => $cookie_jar->{$_} } keys %$cookie_jar ];
 }
 
 ### PRIVATE INSTANCE METHOD ###
@@ -565,6 +437,8 @@ sub _curry_result_cb {
     
     return sub {
         my ($data, $headers) = @_;
+        
+        $DB::single = 1;
         
         my $status  = $headers->{Status};
         my $success = $status eq '200';

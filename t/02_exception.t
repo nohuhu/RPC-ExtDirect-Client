@@ -34,7 +34,6 @@ my $client = eval {
         host        => 'localhost',
         port        => $port,
         api_path    => '/api',
-        router_path => '/router',
     )
 };
 

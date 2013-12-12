@@ -68,7 +68,6 @@ no  warnings 'uninitialized';
 
 use File::Temp 'tempfile';
 use Test::More;
-use RPC::ExtDirect::Client::Async;
 
 eval {
     require AnyEvent::HTTP;
@@ -78,6 +77,8 @@ if ( $@ ) {
     plan skip_all => "AnyEvent::HTTP not present";
 }
 else {
+    require RPC::ExtDirect::Client::Async;
+
     plan tests => 15;
 }
 
@@ -90,7 +91,16 @@ ok $port, 'Got port';
 
 my $cclass = 'RPC::ExtDirect::Client::Async';
 
-my $client = eval { $cclass->new(host => 'localhost', port => $port) };
+my $cv = AnyEvent->condvar;
+
+my %client_params = (
+    host        => 'localhost',
+    port        => $port,
+    api_path    => '/api',
+    cv          => $cv,
+);
+
+my $client = eval { $cclass->new( %client_params ) };
 
 is     $@,      '',      "Didn't die";
 ok     $client,          'Got client object';
@@ -102,8 +112,6 @@ my $arg_named = {
     arg1 => 'foo', arg2 => 'bar', arg3 => 'qux', arg4 => 'mumble'
 };
 my $exp_named = { arg1 => 'foo', arg2 => 'bar', arg3 => 'qux' };
-
-my $cv = AnyEvent->condvar;
 
 my $timeout = 1;
 
