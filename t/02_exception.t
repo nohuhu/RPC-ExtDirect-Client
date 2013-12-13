@@ -16,7 +16,7 @@ use strict;
 use warnings;
 no  warnings 'uninitialized';
 
-use Test::More tests => 11;
+use Test::More tests => 9;
 
 use lib 't/lib';
 use util;
@@ -47,9 +47,9 @@ my $data = eval {
     $client->call( action => 'test', method => 'nonexistent' )
 };
 
-is   $@,        '',            "Nonexistent didn't die";
-like ref $data, qr/Exception/, 'Nonexistent result is exception';
-like $data,     qr/not found/, 'Nonexistent description matches';
+my $regex = qr/^Method nonexistent is not found in Action test/;
+
+like $@, $regex, "Nonexistent croaked";
 
 # Try calling method that dies
 
@@ -57,7 +57,7 @@ $data = eval {
     $client->call( action => 'test', method => 'dies', arg => [], )
 };
 
-is   $@,        '',             "Method call didn't die";
-like ref $data, qr/Exception/,  'Dying method result is exception';
-like $data,     qr/Whoa/,       'Dying method description matches';
+is   $@,             '',             "Method call didn't die";
+like ref $data,      qr/Exception/,  'Dying method result is exception';
+like $data->message, qr/Whoa/,       'Dying method description matches';
 

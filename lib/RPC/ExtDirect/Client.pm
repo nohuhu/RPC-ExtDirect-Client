@@ -17,7 +17,7 @@ use RPC::ExtDirect;
 # This module is not compatible with RPC::ExtDirect < 3.0
 #
 
-croak "RPC::ExtDirect::Client requires RPC::ExtDirect 3.0+"
+croak __PACKAGE__." requires RPC::ExtDirect 3.0+"
     if $RPC::ExtDirect::VERSION < 3.0;
 
 ### PACKAGE GLOBAL VARIABLE ###
@@ -29,8 +29,8 @@ our $VERSION = '3.00_01';
 
 ### PUBLIC CLASS METHOD (CONSTRUCTOR) ###
 #
-# Instantiate a new Client, connect to specified server
-# and initialize Ext.Direct API
+# Instantiate a new Client, connect to the specified server
+# and initialize the Ext.Direct API
 #
 
 sub new {
@@ -61,7 +61,7 @@ sub new {
     @$self{ @our_params } = delete @params{ @our_params };
     
     # The rest of parameters apply to the transport
-    $self->{http_params} = { %params };
+    $self->http_params({ %params });
     
     $self->_init_api($api);
     
@@ -73,44 +73,14 @@ sub new {
 # Call specified Action's Method
 #
 
-sub call {
-    my ($self, %params) = @_;
-
-    my $action = delete $params{action};
-    my $method = delete $params{method};
-    my $arg    = delete $params{arg};
-
-    my $actual_arg = eval { $self->_normalize_arg($action, $method, $arg) };
-    
-    return $self->_exception(
-        where   => 'RPC::ExtDirect::Client',
-        message => $@,
-    ) if $@;
-
-    my $response = $self->_call_sync($action, $method, $actual_arg, \%params);
-
-    # We're only interested in the data
-    return ref($response) =~ /Exception/ ? $response
-         :                                 $response->{result}
-         ;
-}
+sub call { shift->sync_request('call', @_) }
 
 ### PUBLIC INSTANCE METHOD ###
 #
 # Submit a form to specified Action's Method
 #
 
-sub submit {
-    my ($self, %params) = @_;
-
-    # Form calls do not support batching
-    my $response = $self->_call_form(%params);
-
-    # We're only interested in the data
-    return ref($response) =~ /Exception/ ? $response
-         :                                 $response->{result}
-         ;
-}
+sub submit { shift->sync_request('form', @_) }
 
 ### PUBLIC INSTANCE METHOD ###
 #
@@ -124,12 +94,40 @@ sub submit {
 # Poll server for Ext.Direct events
 #
 
-sub poll {
-    my ($self, %params) = @_;
+sub poll { shift->sync_request('poll', @_) }
 
-    my $response = $self->_call_poll(%params);
+### PUBLIC INSTANCE METHOD ###
+#
+# Run a specified request type synchronously
+#
 
-    return $response;
+sub sync_request {
+    my $self = shift;
+    my $type = shift;
+    
+    my $tr_class    = $self->transaction_class;
+    my $transaction = $tr_class->new(@_);
+    
+    my $resp = eval { $self->_sync_request($type, $transaction) };
+    
+    #
+    # Internally we throw an exception string enclosed in arrayref,
+    # so that die() wouldn't munge it. Easier to do and beats stripping
+    # that \n any time. JSON or other packages could throw a plain string
+    # though, so we need to guard against that.
+    #
+    # Rethrow by croak(), and don't strip the file name and line number
+    # this time -- seeing exactly where the thing blew up in *your*
+    # code is a lot more helpful to a developer than the plain old die()
+    # exception would allow.
+    #
+    if ($@) { croak 'ARRAY' eq ref($@) ? $@->[0] : $@ };
+    
+    # We're only interested in the data, unless it's a poll
+    return $type eq 'poll'           ? $resp
+         : ref($resp) =~ /Exception/ ? $resp
+         :                             $resp->{result}
+         ;
 }
 
 ### PUBLIC INSTANCE METHOD ###
@@ -171,29 +169,23 @@ sub set_api {
 sub remoting_var { $_[0]->config->remoting_var }
 sub polling_var  { $_[0]->config->polling_var  }
 
+### PUBLIC INSTANCE METHOD ###
+#
+# Return the name of the Transaction class
+#
+
+sub transaction_class { 'RPC::ExtDirect::Client::Transaction' }
+
 ### PUBLIC INSTANCE METHODS ###
 #
 # Read-write accessors
 #
 
 RPC::ExtDirect::Util::Accessor->mk_accessor(
-    simple => [qw/ config host port cv cookies /],
+    simple => [qw/ config host port cv cookies http_params /],
 );
 
 ############## PRIVATE METHODS BELOW ##############
-
-### PRIVATE INSTANCE METHOD ###
-#
-# Throw an exception. This method is overridden in
-# Client::Async to avoid calling die() directly since it breaks
-# the AnyEvent magic dust.
-#
-
-sub _throw {
-    my ($self, $ex) = @_;
-    
-    die "$ex\n";
-}
 
 ### PRIVATE INSTANCE METHOD ###
 #
@@ -201,14 +193,14 @@ sub _throw {
 #
 
 sub _exception {
-    my ($self, %params) = @_;
+    my ($self, $ex) = @_;
     
     my $config  = $self->config;
-    my $exclass = $config->exception_class_client;
+    my $exclass = $config->exception_class;
     
     eval "require $exclass";
-
-    return $exclass->new({ %params });
+    
+    return $exclass->new($ex);
 }
 
 ### PRIVATE INSTANCE METHOD ###
@@ -221,14 +213,11 @@ sub _decorate_config {
     
     $config->add_accessors(
         overwrite => 1,
-        simple    => [qw/ api_class_client exception_class_client /],
+        simple    => [qw/ api_class_client /],
     );
     
     $config->api_class_client('RPC::ExtDirect::Client::API')
         unless $config->has_api_class_client;
-    
-    $config->exception_class_client('RPC::ExtDirect::Client::Exception')
-        unless $config->has_exception_class_client;
 }
 
 ### PRIVATE INSTANCE METHOD ###
@@ -263,15 +252,14 @@ sub _get_api {
     my ($self) = @_;
 
     my $uri    = $self->_get_uri('api');
-    my $params = $self->{http_params};
+    my $params = $self->http_params;
 
     my $resp = HTTP::Tiny->new(%$params)->get($uri);
 
-    return $self->_throw("Can't download API declaration: $resp->{status}")
+    die ["Can't download API declaration: $resp->{status}"]
         unless $resp->{success};
 
-    return $self->_throw("Empty API declaration")
-        unless length $resp->{content};
+    die ["Empty API declaration"] unless length $resp->{content};
 
     return $resp->{content};
 }
@@ -324,7 +312,7 @@ sub _get_uri {
     if ( $type eq 'remoting' || $type eq 'polling' ) {
         $api = $self->get_api($type);
     
-        die "Don't have API definition for type $type"
+        die ["Don't have API definition for type $type"]
             unless $api;
     }
     
@@ -334,7 +322,7 @@ sub _get_uri {
     my $path = $type eq 'api'      ? $config->api_path
              : $type eq 'remoting' ? $api->url || $config->router_path
              : $type eq 'polling'  ? $api->url || $config->poll_path
-             :                       return $self->_throw("Unknown type $type")
+             :                       die ["Unknown type $type"]
              ;
 
     $path   =~ s{^/}{};
@@ -352,22 +340,25 @@ sub _get_uri {
 #
 
 sub _normalize_arg {
-    my ($self, $action_name, $method_name, $arg) = @_;
+    my ($self, $trans) = @_;
+    
+    my $action_name = $trans->action;
+    my $method_name = $trans->method;
+    my $arg         = $trans->arg;
     
     my $api    = $self->get_api('remoting');
     my $method = $api->get_method_by_name($action_name, $method_name);
     
-    return $self->_throw("Method $method_name is not found in Action $action_name")
+    die ["Method $method_name is not found in Action $action_name"]
         unless $method;
 
     my $named   = $method->is_named;
     my $ordered = $method->is_ordered;
 
-    return $self->_throw("${action_name}->$method_name requires ".
-                        "ordered (by position) arguments")
+    die ["${action_name}->$method_name requires ordered arguments"]
         if $ordered and 'ARRAY' ne ref $arg;
 
-    return $self->_throw("${action_name}->$method_name requires named arguments")
+    die ["${action_name}->$method_name requires named arguments"]
         if $named and 'HASH' ne ref $arg;
 
     my $result;
@@ -395,16 +386,14 @@ sub _normalize_arg {
 #
 
 sub _formalize_arg {
-    my ($self, %params) = @_;
-
-    my $action = $params{action};
-    my $method = $params{method};
-    my $arg    = $params{arg};
-    my $upload = $params{upload};
+    my ($self, $trans) = @_;
+    
+    my $arg    = $trans->arg;
+    my $upload = $trans->upload;
 
     my $fields = {
-        extAction => $action,
-        extMethod => $method,
+        extAction => $trans->action,
+        extMethod => $trans->method,
         extType   => 'rpc',
         extTID    => $self->next_tid,
     };
@@ -418,90 +407,120 @@ sub _formalize_arg {
 
 ### PRIVATE INSTANCE METHOD ###
 #
-# Calls Action's Method in synchronous fashion
+# Make an HTTP request in synchronous fashion
 #
 
-sub _call_sync {
-    my ($self, $action, $method, $arg, $p) = @_;
-
-    my $uri       = $self->_get_uri('remoting');
-    my $params    = $self->{http_params} || {};
-    my $post_body = $self->_encode_post_body($action, $method, $arg);
-
-    @$params{ keys %$p } = values %$p if $p;
+sub _sync_request {
+    my ($self, $type, $transaction) = @_;
     
-    if ( $self->cookies && !$params->{cookies} ) {
-        $params->{cookies} = $self->cookies;
-    }
-
-    my $options = {
-        content => $post_body,
-    };
-
-    $self->_parse_cookies($options, $params);
-
-    my $transp = HTTP::Tiny->new(%$params);
-    my $resp   = $transp->post($uri, $options);
-
-    return $self->_handle_response($resp);
+    my $prepare = "_prepare_${type}_request";
+    my $handle  = "_handle_${type}_response";
+    my $method  = $type eq 'poll' ? 'GET' : 'POST';
+    
+    my ($uri, $request_content, $http_params, $request_options)
+        = $self->$prepare($transaction);
+    
+    $request_options->{content} = $request_content;
+    
+    my $transport = HTTP::Tiny->new(%$http_params);
+    my $response  = $transport->request($method, $uri, $request_options);
+    
+    return $self->$handle($response, $transaction);
 }
 
 ### PRIVATE INSTANCE METHOD ###
 #
-# Call Action's Method by submitting a form
+# Prepare the POST body, headers, request options and other
+# data necessary to make an HTTP request for a non-form call
 #
 
-sub _call_form {
-    my ($self, %params) = @_;
+sub _prepare_call_request {
+    my ($self, $transaction) = @_;
+    
+    my $action     = $transaction->action;
+    my $method     = $transaction->method;
+    my $actual_arg = $self->_normalize_arg($transaction);
+    my $uri        = $self->_get_uri('remoting');
+    my $post_body  = $self->_encode_post_body($action, $method, $actual_arg);
+    
+    # HTTP params is a union between transaction params and client params.
+    my $http_params = $self->_merge_params($transaction);
 
+    my $request_options = {
+        headers => { 'Content-Type' => 'application/json', }
+    };
+
+    $self->_parse_cookies($request_options, $http_params);
+    
+    return (
+        $uri,
+        $post_body,
+        $http_params,
+        $request_options,
+    );
+}
+
+### PRIVATE INSTANCE METHOD ###
+#
+# Prepare the POST body, headers, request options and other
+# data necessary to make an HTTP request for a form call
+#
+
+sub _prepare_form_request {
+    my ($self, $transaction) = @_;
+    
     my $uri    = $self->_get_uri('remoting');
-    my $fields = $self->_formalize_arg(%params);
-    my $upload = $params{upload};
-
+    my $fields = $self->_formalize_arg($transaction);
+    my $upload = $transaction->upload;
+    
     my $ct = $upload ? 'multipart/form-data; boundary='.$self->_get_boundary
            :           'application/x-www-form-urlencoded; charset=utf-8'
            ;
     my $form_body = $upload ? $self->_www_form_multipart($fields, $upload)
                   :           $self->_www_form_urlencode($fields)
                   ;
-
-    my $options = {
-        headers => {
-            'Content-Type' => $ct,
-        },
-        content => $form_body,
+    
+    my $request_options = {
+        headers => { 'Content-Type' => $ct, },
     };
-
-    my $p = $self->{http_params} || {};
-    @$p{ keys %params } = values %params;
-
-    $self->_parse_cookies($options, $p);
-
-    my $resp = HTTP::Tiny->new->post($uri, $options);
-
-    return $self->_handle_response($resp);
+    
+    my $http_params = $self->_merge_params($transaction);
+    
+    $self->_parse_cookies($request_options, $http_params);
+    
+    return (
+        $uri,
+        $form_body,
+        $http_params,
+        $request_options,
+    );
 }
 
 ### PRIVATE INSTANCE METHOD ###
 #
-# Call Ext.Direct polling provider
+# Prepare the POST body, headers, request options and other
+# data necessary to make an HTTP request for an event poll
 #
 
-sub _call_poll {
-    my ($self, %params) = @_;
-
+sub _prepare_poll_request {
+    my ($self, $transaction) = @_;
+    
     my $uri = $self->_get_uri('polling');
-
-    my $options = {};
-
-    my $p = $self->{http_params} || {};
-    @$p{ keys %params } = values %params;
-
-    $self->_parse_cookies($options, $p);
-
-    my $resp = HTTP::Tiny->new->get($uri, $options);
-
-    return $self->_handle_poll_response($resp);
+    
+    my $http_params = $self->_merge_params($transaction);
+    
+    my $request_options = {
+        headers => { 'Content-Type' => 'application/json' },
+    };
+    
+    $self->_parse_cookies($request_options, $http_params);
+    
+    return (
+        $uri,
+        undef,
+        $http_params,
+        $request_options,
+    );
 }
 
 ### PRIVATE INSTANCE METHOD ###
@@ -598,35 +617,49 @@ sub _www_form_urlencode {
 
 ### PRIVATE INSTANCE METHOD ###
 #
+# Produce a union of transaction HTTP parameters
+# with client HTTP parameters
+#
+
+sub _merge_params {
+    my ($self, $trans) = @_;
+    
+    my %client_params = %{ $self->http_params };
+    my %trans_params  = %{ $trans->http_params };
+    
+    # Transaction parameters trump client's
+    @client_params{ keys %trans_params } = values %trans_params;
+    
+    # Cookies from transaction trump client's as well,
+    # but replace them entirely instead of combining
+    $client_params{cookies} = $trans->cookies || $self->cookies;
+    
+    return \%client_params;
+}
+
+### PRIVATE INSTANCE METHOD ###
+#
 # Process Ext.Direct response and return either data or exception
 #
 
-sub _handle_response {
+sub _handle_call_response {
     my ($self, $resp) = @_;
-
-    # By Ext.Direct spec that shouldn't even happen, but then again
-    return $self->_throw("Ext.Direct request unsuccessful: $resp->{status}")
-        unless $resp->{success};
-
-    if ( $resp->{status} == 599 ) {
-
-        # This means internal HTTP::Tiny error
-        return $self->_exception(
-                    message => $resp->{content},
-                    where   => 'Transport layer',
-                );
-    };
-
-    my $content = eval { $self->_decode_response_body( $resp->{content} ) };
     
-    return $self->_exception( message => $@, where => 'HTTP transport' )
-        if $@;
-
-    return $self->_exception(%$content)
+    # By Ext.Direct spec that shouldn't even happen, but then again
+    die ["Ext.Direct request unsuccessful: $resp->{status}"]
+        unless $resp->{success};
+    
+    die [$resp->{content}] if $resp->{status} > 500;
+    
+    my $content = $self->_decode_response_body( $resp->{content} );
+    
+    return $self->_exception($content)
         if 'HASH' eq ref $content and $content->{type} eq 'exception';
-
+    
     return $content;
 }
+
+*_handle_form_response = *_handle_call_response;
 
 ### PRIVATE INSTANCE METHOD ###
 #
@@ -636,14 +669,11 @@ sub _handle_response {
 sub _handle_poll_response {
     my ($self, $resp) = @_;
 
-    $self->_throw("Ext.Direct request unsuccessful: $resp->{status}")
+    die ["Ext.Direct request unsuccessful: $resp->{status}"]
         unless $resp->{success};
 
     # JSON->decode can die()
-    my $ev = eval { $self->_decode_response_body( $resp->{content} ) };
-    
-    return $self->_exception( message => $@, where => 'HTTP transport' )
-        if $@;
+    my $ev = $self->_decode_response_body( $resp->{content} );
 
     # Poll provider has to return a null event if there are no events
     # because returning empty response would break JavaScript client.
@@ -738,36 +768,28 @@ sub _parse_raw_cookies {
     return [ map { join '=', $_ => $cookie_jar->{$_} } keys %$cookie_jar ];
 }
 
-# Tiny helper class
 package
-    RPC::ExtDirect::Client::Exception;
+    RPC::ExtDirect::Client::Transaction;
 
-use overload
-    '""' => \&stringify
-    ;
-
-### PUBLIC CLASS METHOD (CONSTRUCTOR) ###
-#
-# Instantiate a new Exception
-#
+my @fields = qw/ action method arg upload cookies /;
 
 sub new {
-    my ($class, $ex) = @_;
-
-    return bless $ex, $class;
+    my ($class, %params) = @_;
+    
+    my %self_params = map { $_ => delete $params{$_} } @fields;
+    
+    return bless {
+        http_params => { %params },
+        %self_params,
+    }, $class;
 }
 
-### PUBLIC INSTANCE METHOD ###
-#
-# Return stringified Exception
-#
+sub start  {}
+sub finish {}
 
-sub stringify {
-    my ($self) = @_;
-
-    return sprintf "Exception in %s: %s",
-                   $self->{where}, $self->{message};
-}
+RPC::ExtDirect::Util::Accessor->mk_accessors(
+    simple => ['http_params', @fields],
+);
 
 1;
 

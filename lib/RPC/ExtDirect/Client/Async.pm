@@ -21,28 +21,31 @@ use base 'RPC::ExtDirect::Client';
 # This module is not compatible with RPC::ExtDirect < 3.0
 #
 
-croak "RPC::ExtDirect::Client requires RPC::ExtDirect 3.0+"
+croak __PACKAGE__." requires RPC::ExtDirect 3.0+"
     if $RPC::ExtDirect::VERSION < 3.0;
+
+### PACKAGE GLOBAL VARIABLE ###
+#
+# Module version
+#
+
+our $VERSION = '3.00_01';
 
 ### PUBLIC CLASS METHOD (CONSTRUCTOR) ###
 #
-# Instantiate a new Client, connect to the specified server
-# and initialize Ext.Direct API
+# Instantiate a new Async client, connect to the specified server
+# and initialize the Ext.Direct API. Optionally fire a callback
+# when that's done
 #
 
 sub new {
     my ($class, %params) = @_;
     
-    # It is a good style to throw exceptions instead of returning errors,
-    # but in asynchronous code it's rather hard to do - you can't just
-    # die() when an error happened. Instead, we accept optional `cv`
-    # parameter that should be a live AnyEvent::CondVar that we will
-    # croak() upon.
-    # Besides croaking, this cv will be signaled when API becomes available,
-    # so that the caller can wait for it.
+    my $api_cb = delete $params{api_cb};
+    
     my $self = $class->SUPER::new(%params);
     
-    $self->{exceptions} = [];
+    $self->api_cb($api_cb);
     
     return $self;
 }
@@ -52,69 +55,14 @@ sub new {
 # Call specified Action's Method asynchronously
 #
 
-sub call_async {
-    my ($self, %params) = @_;
-    
-    my $action = delete $params{action};
-    my $method = delete $params{method};
-    my $arg    = delete $params{arg};
-    my $cb     = delete $params{cb};
-    my $cv     = delete $params{cv};
-    
-    $self->_throw("Callback subroutine is required in call_async")
-        unless 'CODE' eq ref $cb;
-    
-    my $exceptions = $self->{exceptions};
-    $self->_throw(join "\n", @$exceptions, "\n") if @$exceptions;
-    
-    my $call_cb = sub {
-        my $actual_arg  = $self->_normalize_arg($action, $method, $arg);
-        my $response_cb = $self->_curry_response_cb($cb);
-    
-        $self->_call_async($action, $method, $actual_arg, $response_cb, \%params);
-    };
-    
-    if ($self->api_ready) {
-        $call_cb->();
-    }
-    else {
-        $self->_queue_request($call_cb);
-    }
-    
-    return 1;
-}
+sub call_async { shift->async_request('call', @_) }
 
 ### PUBLIC INSTANCE METHOD ###
 #
 # Submit a form to specified Action's Method asynchronously
 #
 
-sub submit_async {
-    my ($self, %params) = @_;
-    
-    my $cb = delete $params{cb};
-    
-    $self->_throw("Callback subroutine is required in submit_async")
-        unless 'CODE' eq ref $cb;
-    
-    my $exceptions = $self->{exceptions};
-    $self->_throw(join "\n", @$exceptions, "\n") if @$exceptions;
-    
-    my $submit_cb = sub {
-        my $response_cb = $self->_curry_response_cb($cb);
-    
-        $self->_call_form_async(%params, cb => $response_cb);
-    };
-    
-    if ($self->api_ready) {
-        $submit_cb->();
-    }
-    else {
-        $self->_queue_request($submit_cb);
-    };
-    
-    return 1;
-}
+sub submit_async { shift->async_request('form', @_) }
 
 ### PUBLIC INSTANCE METHOD ###
 #
@@ -128,30 +76,40 @@ sub submit_async {
 # Poll server for events asynchronously
 #
 
-sub poll_async {
-    my ($self, %params) = @_;
+sub poll_async { shift->async_request('poll', @_) }
+
+### PUBLIC INSTANCE METHOD ###
+#
+# Run a specified request type asynchronously
+#
+
+sub async_request {
+    my $self = shift;
+    my $type = shift;
     
-    my $cb = delete $params{cb};
+    my $tr_class    = $self->transaction_class;
+    my $transaction = $tr_class->new(@_);
     
-    $self->_throw("Callback subroutine is required in poll_async")
-        unless 'CODE' eq ref $cb;
+    #
+    # We try to avoid action-at-a-distance here, so we will
+    # call all the stuff that could die() up front,
+    # to pass on the exception to the caller immediately
+    # rather than blowing up later on.
+    #
+    eval { $self->_async_request($type, $transaction) };
     
-    my $exceptions = $self->{exceptions};
-    $self->_throw(join "\n", @$exceptions, "\n") if @$exceptions;
+    if ($@) { croak 'ARRAY' eq ref($@) ? $@->[0] : $@ };
     
-    my $poll_cb = sub {
-        $self->_call_poll_async(%params, cb => $cb);
-    };
-    
-    if ($self->api_ready) {
-        $poll_cb->();
-    }
-    else {
-        $self->_queue_request($poll_cb);
-    };
-    
+    # Stay positive
     return 1;
 }
+
+### PUBLIC INSTANCE METHOD ###
+#
+# Return the name of the Transaction class
+#
+
+sub transaction_class { 'RPC::ExtDirect::Client::Async::Transaction' }
 
 ### PUBLIC INSTANCE METHOD ###
 #
@@ -159,7 +117,7 @@ sub poll_async {
 #
 
 RPC::ExtDirect::Util::Accessor->mk_accessor(
-    simple => [qw/ api_ready /],
+    simple => [qw/ api_ready api_cb request_queue /],
 );
 
 ############## PRIVATE METHODS BELOW ##############
@@ -198,9 +156,7 @@ sub _init_api {
     # and wait for the API to arrive, then re-run the requests.
     # After the API declaration has been retrieved, all subsequent
     # requests run without queuing.
-    $self->{request_queue} = [];
-    
-    my $cv = $self->cv;
+    $self->request_queue([]);
     
     $self->_get_api(sub {
         my ($api_js) = @_;
@@ -208,12 +164,16 @@ sub _init_api {
         $self->_import_api($api_js);
         $self->api_ready(1);
         
-        my $queue = $self->{request_queue};
-        delete $self->{request_queue};
+        my $queue = $self->request_queue;
+        delete $self->{request_queue};  # A bit quirky
         
         $_->() for @$queue;
         
-        $cv->end if 'AnyEvent::CondVar' eq ref $cv;
+        my $cv = $self->cv;
+    
+        $cv->end if $cv;
+        
+        $self->api_cb->($self) if $self->api_cb;
     });
 }
 
@@ -243,7 +203,7 @@ sub _get_api {
         $cb->($content);
     };
     
-    $cv->begin if 'AnyEvent::CondVar' eq ref $cv;
+    $cv->begin if $cv;
 
     AnyEvent::HTTP::http_request(
         GET => $uri,
@@ -254,139 +214,65 @@ sub _get_api {
 
 ### PRIVATE INSTANCE METHOD ###
 #
-# Queue asynchronous request
+# Run asynchronous request(s) if the API is already available;
+# queue for later if not
+#
+
+sub _run_request {
+    my $self = shift;
+    
+    if ( $self->api_ready ) {
+        $_->() for @_;
+    }
+    else {
+        $self->_queue_request(@_);
+    }
+}
+
+### PRIVATE INSTANCE METHOD ###
+#
+# Queue asynchronous request(s)
 #
 
 sub _queue_request {
-    my ($self, $req) = @_;
+    my $self = shift;
     
     my $queue = $self->{request_queue};
     
-    push @$queue, $req;
+    push @$queue, @_;
 }
 
 ### PRIVATE INSTANCE METHOD ###
 #
-# Call Action's Method in asynchronous fashion
+# Make an HTTP request in asynchronous fashion
 #
 
-sub _call_async {
-    my ($self, $action, $method, $actual_arg, $response_cb, $p) = @_;
+sub _async_request {
+    my ($self, $type, $transaction) = @_;
     
-    my $uri       = $self->_get_uri('remoting');
-    my $params    = $self->{http_params} || {};
-    my $post_body = $self->_encode_post_body($action, $method, $actual_arg);
+    $self->_run_request(sub {
+        my $prepare = "_prepare_${type}_request";
+        my $method  = $type eq 'poll' ? 'GET' : 'POST';
     
-    @$params{ keys %$p } = values %$p if $p;
+        $transaction->start;
+        
+        my ($uri, $request_content, $http_params, $request_options)
+            = eval { $self->$prepare($transaction) };
+        
+        $transaction->finish('ARRAY' eq ref $@ ? $@->[0] : $@, !1)
+            if $@;
     
-    if ( $self->cookies && !$params->{cookies} ) {
-        $params->{cookies} = $self->cookies;
-    }
-
-    my $options = {};
+        my $request_headers = $request_options->{headers};
     
-    $self->_parse_cookies($options, $params);
-    
-    my $headers = $options->{headers} || {};
-    $headers->{'Content-Type'} = 'application/octet-stream';
-    
-    # TODO Handle errors
-    my $result_cb = $self->_curry_result_cb($response_cb);
-    
-    AnyEvent::HTTP::http_request(
-        POST    => $uri,
-        headers => $headers,
-        body    => $post_body,
-        %$params,
-        $result_cb,
-    );
-}
-
-### PRIVATE PACKAGE SUBROUTINE ###
-#
-# Cleanse Response
-#
-
-sub _cleanse_response {
-    my ($resp) = @_;
-    
-    # We're only interested in the data
-    return 'HASH' eq ref $resp ? $resp->{result} : $resp;
-}
-
-### PRIVATE INSTANCE METHOD ###
-#
-# Call Action's Method by submitting a form in asynchronous fashion
-#
-
-sub _call_form_async {
-    my ($self, %params) = @_;
-    
-    my $resp_cb = delete $params{cb};
-    my $upload  = $params{upload};
-    my $uri     = $self->_get_uri('remoting');
-    my $fields  = $self->_formalize_arg(%params);
-    
-    my $ct = $upload ? 'multipart/form-data; boundary='.$self->_get_boundary
-           :           'application/x-www-form-urlencoded; charset=utf-8'
-           ;
-    my $form_body = $upload ? $self->_www_form_multipart($fields, $upload)
-                  :           $self->_www_form_urlencode($fields)
-                  ;
-
-    my $options = {};
-    my $p = $self->{http_params} || {};
-    @$p{ keys %params } = values %params;
-    
-    if ( $self->cookies && !$p->{cookies} ) {
-        $p->{cookies} = $self->cookies;
-    }
-
-    $self->_parse_cookies($options, $p);
-    
-    my $headers = $options->{headers} || {};
-    $headers->{'Content-Type'} = $ct;
-    
-    my $result_cb = $self->_curry_result_cb($resp_cb);
-    
-    AnyEvent::HTTP::http_request(
-        POST    => $uri,
-        headers => $headers,
-        body    => $form_body,
-        %$p,
-        $result_cb,
-    );
-}
-
-### PRIVATE INSTANCE METHOD ###
-#
-# Call polling provider in asynchronous fashion
-#
-
-sub _call_poll_async {
-    my ($self, %params) = @_;
-    
-    my $resp_cb = delete $params{cb};
-    my $uri     = $self->_get_uri('polling');
-    
-    my $options = {};
-    
-    my $p = $self->{http_params} || {};
-    @$p{ keys %params } = values %params;
-
-    if ( $self->cookies && !$p->{cookies} ) {
-        $p->{cookies} = $self->cookies;
-    }
-
-    $self->_parse_cookies($options, $p);
-
-    my $result_cb = $self->_curry_result_cb($resp_cb, 1);
-    
-    AnyEvent::HTTP::http_request(
-        GET => $uri,
-        %$p,
-        $result_cb,
-    );
+        # TODO Handle errors
+        AnyEvent::HTTP::http_request(
+            $method, $uri,
+            headers => $request_headers,
+            body    => $request_content,
+            %$http_params,
+            $self->_curry_response_cb($type, $transaction),
+        )
+    });
 }
 
 ### PRIVATE INSTANCE METHOD ###
@@ -408,50 +294,85 @@ sub _parse_cookies {
 
 ### PRIVATE INSTANCE METHOD ###
 #
-# Generate response handling callback
-#
-
-sub _curry_response_cb {
-    my ($self, $cb) = @_;
-    
-    return sub {
-        my ($response) = @_;
-        
-        my $result = _cleanse_response($response);
-        
-        $cb->($result);
-    };
-}
-
-### PRIVATE INSTANCE METHOD ###
-#
 # Generate result handling callback
 #
 
-sub _curry_result_cb {
-    my ($self, $cb, $is_poll) = @_;
-    
-    my $handler = $is_poll ? '_handle_poll_response'
-                :            '_handle_response'
-                ;
+sub _curry_response_cb {
+    my ($self, $type, $transaction) = @_;
     
     return sub {
         my ($data, $headers) = @_;
         
-        $DB::single = 1;
-        
         my $status  = $headers->{Status};
         my $success = $status eq '200';
         
-        my $result = $self->$handler({
-            status  => $status,
-            success => $status eq '200',
-            content => $data,
-        });
+        my $handler  = "_handle_${type}_response";
+        my $response = eval {
+            $self->$handler({
+                status  => $status,
+                success => $success,
+                content => $data,
+            })
+        } if $success;
         
-        $cb->($result, $success);
+        # We're only interested in the data, but anything goes
+        my $result = 'ARRAY' eq ref($@)       ? $@->[0]
+                   : $@                       ? $@
+                   : !$success                ? $headers->{Reason}
+                   : 'poll' eq $type          ? $response
+                   : 'HASH' eq ref($response) ? $response->{result}
+                   :                            $response
+                   ;
+        
+        $transaction->finish($result, !$@ && $success);
     };
 }
+
+package
+    RPC::ExtDirect::Client::Async::Transaction;
+
+use Carp;
+
+use base 'RPC::ExtDirect::Client::Transaction';
+
+my @fields = qw/ cb cv actual_arg fields /;
+
+sub new {
+    my ($class, %params) = @_;
+    
+    croak "Callback subroutine is required"
+        unless 'CODE' eq ref $params{cb};
+    
+    my %self_params = map { $_ => delete $params{$_} } @fields;
+    
+    my $self = $class->SUPER::new(%params);
+    
+    @$self{ keys %self_params } = values %self_params;
+    
+    return $self;
+}
+
+sub start {
+    my ($self) = @_;
+    
+    my $cv = $self->cv;
+    
+    $cv->begin if $cv;
+}
+
+sub finish {
+    my ($self, $result, $success) = @_;
+    
+    my $cb = $self->cb;
+    my $cv = $self->cv;
+    
+    $cb->($result, $success) if $cb;
+    $cv->end                 if $cv;
+}
+
+RPC::ExtDirect::Util::Accessor->mk_accessors(
+    simple => [qw/ cb cv /],
+);
 
 1;
 

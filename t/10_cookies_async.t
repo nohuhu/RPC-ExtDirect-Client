@@ -49,6 +49,10 @@ use strict;
 use warnings;
 no  warnings 'uninitialized';
 
+# !!! This is a temporary stop gap solution !!!
+# Get rid of the Coro dependency before releasing to CPAN!
+use Coro;
+
 use Test::More;
 
 eval {
@@ -61,8 +65,7 @@ if ( $@ ) {
 else {
     require RPC::ExtDirect::Client::Async;
 
-    #plan tests => 13;
-    plan tests => 3;
+    plan tests => 7;
 };
 
 use lib 't/lib';
@@ -72,166 +75,110 @@ use util;
 my $port = shift @ARGV || start_server(static_dir => 't/htdocs');
 ok $port, 'Got port';
 
-my $timeout = 1;
+# Give the server a chance to start
+sleep 1;
+
 my %client_params = (
     host         => '127.0.0.1',
     port         => $port,
     api_path     => '/api',
+    timeout      => 10,
 );
 
-my $expected_data = {
-    foo => 'bar',
-    bar => 'baz',
-};
+my $tests = eval do { local $/; <DATA>; }       ## no critic
+    or die "Can't eval DATA: '$@'";
 
-my $expected_event = {
-    name => 'cookies',
-    data => $expected_data,
-};
+my $cv = AnyEvent->condvar;
 
-my $client = RPC::ExtDirect::Client::Async->new(
-    %client_params,
-    cookies => $expected_data,
-);
-
-run_tests(
-    client         => $client,
-    cookie_jar     => undef,
-    desc           => 'raw cookies w/ new',
-    expected_data  => $expected_data,
-    expected_event => $expected_event,
-);
-
-exit 0;
-
-$client = RPC::ExtDirect::Client::Async->new( %client_params );
-
-$expected_data = {
-    bar => 'foo',
-    baz => 'bar',
-};
-
-$expected_event = {
-    name => 'cookies',
-    data => $expected_data,
-};
-
-run_tests(
-    client         => $client,
-    cookie_jar     => $expected_data,
-    desc           => 'raw cookies override',
-    expected_data  => $expected_data,
-    expected_event => $expected_event,
-);
-
-$expected_data = {
-    qux   => 'frob',
-    mymse => 'splurge',
-};
-
-$expected_event = {
-    name => 'cookies',
-    data => $expected_data,
-};
-
-run_tests(
-    client         => $client,
-    cookie_jar     => $expected_data,
-    desc           => 'raw cookies per each call',
-    expected_data  => $expected_data,
-    expected_event => $expected_event,
-);
-
-SKIP: {
-    skip "Need HTTP::Cookies", 3 unless eval "require HTTP::Cookies";
-
-    my $cookie_jar = HTTP::Cookies->new;
-
-    $cookie_jar->set_cookie(1, 'foo', 'bar', '/', '');
-    $cookie_jar->set_cookie(1, 'bar', 'baz', '/', '');
-
-    my $expected_data = {
-        foo => 'bar',
-        bar => 'baz',
-    };
-
-    my $expected_event = {
-        name => 'cookies',
-        data => $expected_data,
-    };
-
-    $client = RPC::ExtDirect::Client::Async->new( %client_params );
-
-    run_tests(
-        client         => $client,
-        cookie_jar     => $cookie_jar,
-        desc           => 'HTTP::Cookies',
-        expected_data  => $expected_data,
-        expected_event => $expected_event,
-    );
-}
+run_tests(%$_) for @$tests;
 
 sub run_tests {
     my %params = @_;
 
-    my $client         = $params{client};
+    my $client_params  = $params{client_params};
     my $cookie_jar     = $params{cookie_jar};
     my $desc           = $params{desc};
     my $expected_data  = $params{expected_data};
-    my $expected_event = $params{expected_event};
+    my $expected_event = { name => 'cookies', data => $expected_data };
 
-    my $cv = AnyEvent->condvar;
+    my $api_cv = AnyEvent->condvar;
 
-    $cv->begin;
+    $api_cv->begin;
+
+    my $client = RPC::ExtDirect::Client::Async->new(
+        @$client_params,
+        api_cb => sub {
+            $api_cv->end;
+        },
+    );
+
+    $api_cv->recv;
 
     $client->call_async(
+        $cookie_jar ? (cookies => $cookie_jar) : (),
         action  => 'test',
         method  => 'ordered',
         arg     => [],
-        $cookie_jar ? (cookies => $cookie_jar) : (),
-        timeout => $timeout,
-        cb => sub {
+        cv      => $cv,
+        cb      => sub {
             my $data = shift;
 
             is_deeply $data, $expected_data, "Ordered with $desc"
                 or diag explain $data;
-
-            $cv->end;
         },
     );
 
-    $cv->begin;
-
     $client->submit_async(
+        $cookie_jar ? (cookies => $cookie_jar) : (),
         action  => 'test',
         method  => 'form',
-        $cookie_jar ? (cookies => $cookie_jar) : (),
-        timeout => $timeout,
-        cb => sub {
+        cv      => $cv,
+        cb      => sub {
             my $data = shift;
 
             is_deeply $data, $expected_data, "Form handler with $desc"
                 or diag explain $data;
-            
-            $cv->end;
         },
     );
 
-    $cv->begin;
-
     $client->poll_async(
         $cookie_jar ? (cookies => $cookie_jar) : (),
-        timeout => $timeout,
+        cv => $cv,
         cb => sub {
             my $event = shift;
 
             is_deeply $event, $expected_event, "Poll handler with $desc"
                 or diag explain $event;
-    
-            $cv->end;
         },
     );
-
-    $cv->recv;
 }
 
+$cv->recv;
+
+done_testing;
+
+
+__DATA__
+
+[
+    {
+        desc           => 'raw cookies w/ new',
+        expected_data  => { foo => 'bar', bar => 'baz', },
+        client_params  => [
+            %client_params,
+            cookies => { foo => 'bar', bar => 'baz', },
+        ],
+    },
+    {
+        desc           => 'raw cookies w/ call',
+        cookie_jar     => {
+            bar => 'foo',
+            baz => 'bar',
+        },
+        expected_data  => {
+            bar => 'foo',
+            baz => 'bar',
+        },
+        client_params  => [ %client_params ],
+    },
+]
