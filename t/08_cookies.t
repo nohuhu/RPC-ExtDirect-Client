@@ -50,14 +50,12 @@ no  warnings 'uninitialized';
 
 use Test::More tests => 13;
 
+use RPC::ExtDirect::Server::Util;
 use RPC::ExtDirect::Client;
 
-use lib 't/lib';
-use util;
-
-# Port number as parameter means there's server listening elsewhere
-my $port = shift @ARGV || start_server(static_dir => 't/htdocs');
-ok $port, 'Got port';
+# Host/port in @ARGV means there's server listening elsewhere
+my ($host, $port) = maybe_start_server(static_dir => 't/htdocs');
+ok $port, "Got host: $host and port: $port";
 
 my $expected_data = {
     foo => 'bar',
@@ -70,12 +68,9 @@ my $expected_event = {
 };
 
 my $client = RPC::ExtDirect::Client->new(
-    host        => 'localhost',
-    port        => $port,
-    cookies     => $expected_data,
-    api_path    => '/api',
-    router_path => '/router',
-    poll_path   => '/events',
+    host    => $host,
+    port    => $port,
+    cookies => $expected_data,
 );
 
 run_tests(
@@ -89,9 +84,6 @@ run_tests(
 $client = RPC::ExtDirect::Client->new(
     host        => 'localhost',
     port        => $port,
-    api_path    => '/api',
-    router_path => '/router',
-    poll_path   => '/events',
 );
 
 $expected_data = {
@@ -149,11 +141,8 @@ SKIP: {
     };
 
     $client = RPC::ExtDirect::Client->new(
-        host        => 'localhost',
-        port        => $port,
-        api_path    => '/api',
-        router_path => '/router',
-        poll_path   => '/events',
+        host => $host,
+        port => $port,
     );
 
     run_tests(

@@ -26,7 +26,7 @@ REMOTING_API = {
               ],
         "Qux":[
                 { "len":5, "name":"bar_bar" },
-                { "formHandler":true, "len":0, "name":"bar_baz" },
+                { "formHandler":true, "name":"bar_baz" },
                 { "len":4, "name":"bar_foo" },
                 { "len":2, "name":"foo_bar" },
                 { "name":"foo_baz", "params":["foo","bar","baz"] },
@@ -86,7 +86,7 @@ my @tests = (
       methods => [
         { name => 'bar_bar', len => 5, is_named => !1, is_ordered => 1,
           formHandler => undef, params => undef, },
-        { name => 'bar_baz', len => 0, is_named => !1, is_ordered => 1,
+        { name => 'bar_baz', len => undef, is_named => !1, is_ordered => !1,
           formHandler => 1, params => undef, },
         { name => 'bar_foo', len => 4, is_named => !1, is_ordered => 1,
           formHandler => undef, params => undef, },

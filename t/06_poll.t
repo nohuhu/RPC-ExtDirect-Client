@@ -27,26 +27,17 @@ no  warnings 'uninitialized';
 
 use Test::More tests => 11;
 
-use lib 't/lib';
-use util;
+use RPC::ExtDirect::Server::Util;
 
 BEGIN { use_ok 'RPC::ExtDirect::Client' };
 
-# Port number as parameter means there's server listening elsewhere
-my $port = shift @ARGV || start_server(static_dir => 't/htdocs');
-ok $port, 'Got port';
+# Host/port in @ARGV means there's server listening elsewhere
+my ($host, $port) = maybe_start_server(static_dir => 't/htdocs');
+ok $port, "Got host: $host and port: $port";
 
 my $cclass = 'RPC::ExtDirect::Client';
 
-my $client = eval {
-    $cclass->new(
-        host        => 'localhost',
-        port        => $port,
-        api_path    => '/api',
-        router_path => '/router',
-        poll_path   => '/events',
-    )
-};
+my $client = eval { $cclass->new( host => $host, port => $port,) };
 
 is     $@,      '',      "Didn't die";
 ok     $client,          'Got client object';
