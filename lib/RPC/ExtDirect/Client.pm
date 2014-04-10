@@ -18,7 +18,7 @@ use RPC::ExtDirect;
 #
 
 croak __PACKAGE__." requires RPC::ExtDirect 3.0+"
-    if $RPC::ExtDirect::VERSION < 3.0;
+    if $RPC::ExtDirect::VERSION lt '3.0';
 
 ### PACKAGE GLOBAL VARIABLE ###
 #
@@ -63,7 +63,10 @@ sub new {
     # The rest of parameters apply to the transport
     $self->http_params({ %params });
     
-    $self->_init_api($api);
+    # This may die()
+    eval { $self->_init_api($api) };
+    
+    if ($@) { croak 'ARRAY' eq ref($@) ? $@->[0] : $@ };
     
     return $self;
 }
@@ -256,7 +259,7 @@ sub _get_api {
 
     my $resp = HTTP::Tiny->new(%$params)->get($uri);
 
-    die ["Can't download API declaration: $resp->{status}"]
+    die ["Can't download API declaration: $resp->{status} $resp->{content}"]
         unless $resp->{success};
 
     die ["Empty API declaration"] unless length $resp->{content};
