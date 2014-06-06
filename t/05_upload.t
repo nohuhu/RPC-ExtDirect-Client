@@ -56,8 +56,11 @@ my $exp = [
 ];
 
 my $data = eval {
-    $client->submit( action => 'test', method => 'handle_upload',
-                     upload => \@files
+    $client->submit(
+        action => 'test',
+        method => 'handle_upload',
+        upload => \@files,
+        timeout => 99999,
     )
 };
 

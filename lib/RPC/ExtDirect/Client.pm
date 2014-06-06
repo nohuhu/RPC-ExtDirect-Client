@@ -7,10 +7,8 @@ no  warnings 'uninitialized';
 use Carp;
 
 use File::Spec;
-use HTTP::Tiny;
 
 use RPC::ExtDirect::Config;
-use RPC::ExtDirect::Client::API;
 use RPC::ExtDirect;
 
 #
@@ -25,7 +23,7 @@ croak __PACKAGE__." requires RPC::ExtDirect 3.0+"
 # Module version
 #
 
-our $VERSION = '3.00_01';
+our $VERSION = '1.00';
 
 ### PUBLIC CLASS METHOD (CONSTRUCTOR) ###
 #
@@ -36,8 +34,9 @@ our $VERSION = '3.00_01';
 sub new {
     my ($class, %params) = @_;
     
-    my $config = delete $params{config} || RPC::ExtDirect::Config->new();
     my $api    = delete $params{api};
+    my $config = delete $params{config} || ($api && $api->config) ||
+                 RPC::ExtDirect::Config->new();
     
     my $self = bless {
         config => $config,
@@ -126,11 +125,20 @@ sub sync_request {
     #
     if ($@) { croak 'ARRAY' eq ref($@) ? $@->[0] : $@ };
     
-    # We're only interested in the data, unless it's a poll
-    return $type eq 'poll'           ? $resp
-         : ref($resp) =~ /Exception/ ? $resp
-         :                             $resp->{result}
-         ;
+    # We're only interested in the data, unless it's a poll. In versions
+    # < 1.0, we used to return a scalar value for polls, either a single
+    # event or an arrayref of event hashrefs; that behavior was more or
+    # less closely following the spec and typical server response.
+    # However that was kinda awkward, so we try to DWIM here and adjust
+    # to the caller's expectations.
+    if ( $type eq 'poll') {
+        return wantarray   ? @$resp
+             : @$resp == 1 ? $resp->[0]
+             :               $resp
+             ;
+    }
+    
+    return ref($resp) =~ /Exception/ ? $resp : $resp->{result};
 }
 
 ### PUBLIC INSTANCE METHOD ###
@@ -174,7 +182,9 @@ sub polling_var  { $_[0]->config->polling_var  }
 
 ### PUBLIC INSTANCE METHOD ###
 #
-# Return the name of the Transaction class
+# Return the name of the Transaction class. This was not made
+# a Config option since the only case when somebody would want
+# to change that is in a subclass.
 #
 
 sub transaction_class { 'RPC::ExtDirect::Client::Transaction' }
@@ -216,11 +226,19 @@ sub _decorate_config {
     
     $config->add_accessors(
         overwrite => 1,
-        simple    => [qw/ api_class_client /],
+        simple    => [qw/ api_class_client transport_class /],
     );
     
     $config->api_class_client('RPC::ExtDirect::Client::API')
         unless $config->has_api_class_client;
+    
+    $config->transport_class('HTTP::Tiny')
+        unless $config->has_transport_class;
+    
+    # This is the best place to load the classes since we only
+    # want to do this once.
+    eval "require " . $config->api_class_client;
+    eval "require " . $config->transport_class;
 }
 
 ### PRIVATE INSTANCE METHOD ###
@@ -256,8 +274,10 @@ sub _get_api {
 
     my $uri    = $self->_get_uri('api');
     my $params = $self->http_params;
+    
+    my $transport_class = $self->config->transport_class;
 
-    my $resp = HTTP::Tiny->new(%$params)->get($uri);
+    my $resp = $transport_class->new(%$params)->get($uri);
 
     die ["Can't download API declaration: $resp->{status} $resp->{content}"]
         unless $resp->{success};
@@ -425,7 +445,9 @@ sub _sync_request {
     
     $request_options->{content} = $request_content;
     
-    my $transport = HTTP::Tiny->new(%$http_params);
+    my $transport_class = $self->config->transport_class;
+    
+    my $transport = $transport_class->new(%$http_params);
     my $response  = $transport->request($method, $uri, $request_options);
     
     return $self->$handle($response, $transaction);
@@ -614,8 +636,10 @@ sub _get_boundary {
 
 sub _www_form_urlencode {
     my ($self, $arg) = @_;
+    
+    my $transport_class = $self->config->transport_class;
 
-    return HTTP::Tiny->new->www_form_urlencode($arg);
+    return $transport_class->new->www_form_urlencode($arg);
 }
 
 ### PRIVATE INSTANCE METHOD ###
@@ -679,17 +703,24 @@ sub _handle_poll_response {
     my $ev = $self->_decode_response_body( $resp->{content} );
 
     # Poll provider has to return a null event if there are no events
-    # because returning empty response would break JavaScript client.
-    # But we don't have to follow that broken implementation here.
-    return
+    # because returning empty response would break JavaScript client
+    # in certain (now outdated) Ext JS versions. The server has to keep
+    # the compatible behavior but we don't have to follow that
+    # broken implementation here.
+    return []
         if ('HASH' ne ref $ev and 'ARRAY' ne ref $ev) or
            ('HASH' eq ref $ev and
                 ($ev->{name} eq '__NONE__' or $ev->{name} eq '' or
                  $ev->{type} ne 'event')
            )
         ;
+    
+    # Server side can return either a single event, or an array
+    # of events. This is how the spec goes. :/ Normalize the output
+    # here so that we could sanitize it upstream.
+    $ev = 'ARRAY' eq ref($ev) ? $ev : [ $ev ];
 
-    delete $_->{type} for 'ARRAY' eq ref $ev ? @$ev : ( $ev );
+    delete $_->{type} for @$ev;
 
     return $ev;
 }

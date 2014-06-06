@@ -50,6 +50,7 @@ no  warnings 'uninitialized';
 
 use Test::More tests => 13;
 
+use RPC::ExtDirect::Test::Util;
 use RPC::ExtDirect::Server::Util;
 use RPC::ExtDirect::Client;
 
@@ -170,8 +171,7 @@ sub run_tests {
         $cookie_jar ? (cookies => $cookie_jar) : (),
     );
 
-    is_deeply $data, $expected_data, "Ordered with $desc"
-        or diag explain $data;
+    is_deep $data, $expected_data, "Ordered with $desc";
 
     $data = $client->submit(
         action  => 'test',
@@ -179,14 +179,11 @@ sub run_tests {
         $cookie_jar ? (cookies => $cookie_jar) : (),
     );
 
-    is_deeply $data, $expected_data, "Form handler with $desc"
-        or diag explain $data;
+    is_deep $data, $expected_data, "Form handler with $desc";
 
     my $event = $client->poll(
         $cookie_jar ? (cookies => $cookie_jar) : (),
     );
 
-    is_deeply $event, $expected_event, "Poll handler with $desc"
-        or diag explain $data;
+    is_deep $event, $expected_event, "Poll handler with $desc";
 }
-
