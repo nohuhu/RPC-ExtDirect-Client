@@ -18,6 +18,7 @@ RPC::ExtDirect::Client - Ext.Direct client in Perl
     use RPC::ExtDirect::Client;
 
     my $client = RPC::ExtDirect::Client->new(host => 'localhost');
+    
     my $result = $client->call(
         action  => 'Action',
         method  => 'Method',
@@ -31,9 +32,12 @@ RPC::ExtDirect::Client - Ext.Direct client in Perl
 
 This module implements Ext.Direct client in pure Perl. Its main purpose
 is to be used for testing server side Ext.Direct classes, complementing
-L<RPC::ExtDirect::Server>.
+L<RPC::ExtDirect::Server>. It can also be used for testing Ext.Direct
+Actions developed in languages other than Perl, or for something else
+altogether.
 
-RPC::ExtDirect::Client uses L<HTTP::Tiny> for the transport layer.
+RPC::ExtDirect::Client uses L<HTTP::Tiny> for the transport layer by
+default.
 
 =for readme stop
 
@@ -112,7 +116,7 @@ See L<RPC::ExtDirect::Config/remoting_var>.
 JavaScript variable name used to assign Ext.Direct polling API object to.
 See L<RPC::ExtDirect::Config/polling_var>.
 
-=item %other
+=item C<%other>
 
 All other arguments are passed to HTTP::Tiny constructor. See
 L<HTTP::Tiny/new> for more detail.
@@ -121,11 +125,11 @@ L<HTTP::Tiny/new> for more detail.
 
 =item C<get_api>
 
-Instance method. Returns an L<RPC::ExtDirect::API> derived object with
+Instance method. Returns an L</api_class_client> object with the
 L<Ext.Direct API|RPC::ExtDirect::Intro/API> declaration published by
 the server.
 
-Accepts one positional argument, API type, that can be either
+Accepts one mandatory positional argument, API type, that can be either
 C<'remoting'> or C<'polling'> to retrieve the corresponding API object.
 
 =item C<call>
@@ -140,7 +144,7 @@ Parameters:
 
 =over 8
 
-=item <action>
+=item C<action>
 
 L<Ext.Direct Action|RPC::ExtDirect::Intro/Action> (class) name. This
 parameter is mandatory.
@@ -176,7 +180,7 @@ Parameters:
 
 =over 8
 
-=item <action>
+=item C<action>
 
 L<Ext.Direct Action|RPC::ExtDirect::Intro/Action> (class) name. This
 parameter is mandatory.
@@ -218,7 +222,8 @@ to instantiate L<RPC::ExtDirect::Event> objects:
 B<PLEASE NOTE> that in versions < 1.0 this method used to return a
 scalar value which could be either a single event hashref, or an arrayref
 of event hashrefs. It will continue following that behavior when called
-in scalar context, but doing that is no longer recommended.
+in scalar context, but doing that is no longer recommended (although
+not exactly deprecated).
 
 This method accepts the following named parameters in a hashref:
 
@@ -236,7 +241,7 @@ in the same format as for constructor, see L</new>.
 =head1 CONFIGURATION OPTIONS
 
 RPC::ExtDirect::Client adds the following options specific to the Client,
-and adds them to the L<RPC::ExtDirect::Config> instance it uses:
+and sets them in the L<RPC::ExtDirect::Config> instance it uses:
 
 =over 4
 
@@ -300,6 +305,8 @@ To install this module type the following:
     perl Makefile.PL
     make && make test
     make install
+
+=end readme
 
 =for readme stop
 
