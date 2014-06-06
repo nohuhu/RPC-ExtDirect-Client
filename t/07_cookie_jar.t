@@ -32,6 +32,9 @@ SKIP: {
 
     $cclass->_parse_cookies($options, $params);
 
+    $options->{headers}->{Cookie}
+        = [ sort @{ $options->{headers}->{Cookie} } ];
+
     is_deeply $options, $expected, "HTTP::Cookies parsing";
 }
 
@@ -39,6 +42,9 @@ my $options = {};
 my $params  = { cookies => { foo => 'bar', bar => 'baz' } };
 
 $cclass->_parse_cookies($options, $params);
+
+$options->{headers}->{Cookie}
+    = [ sort @{ $options->{headers}->{Cookie} } ];
 
 is_deeply $options, $expected, "Raw cookies parsing";
 
