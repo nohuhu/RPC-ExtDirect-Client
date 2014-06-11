@@ -36,10 +36,106 @@ L<RPC::ExtDirect::Server>. It can also be used for testing Ext.Direct
 Actions developed in languages other than Perl, or for something else
 altogether.
 
-RPC::ExtDirect::Client uses L<HTTP::Tiny> for the transport layer by
-default.
+This client is synchronous, i.e. all method calls are blocking. If you
+need a non-blocking way of working with Ext.Direct, take a look at
+L<RPC::ExtDirect::Client::Async> instead.
+
+Unless configured otherwise, RPC::ExtDirect::Client will use
+L<HTTP::Tiny> for the transport layer.
 
 =for readme stop
+
+If you are not sure what Ext.Direct is, read L<RPC::ExtDirect::Intro>
+first.
+
+=head1 CAVEATS
+
+=head2 Blocking requests
+
+Before a client object can be used, it needs an instance of the
+L<Ext.Direct API|RPC::ExtDirect::Intro/API>. There are two ways of
+initializing the API: remotely from a server, and locally by passing
+an L<RPC::ExtDirect::API> object instance to the client constructor:
+
+    my $api = RPC::ExtDirect::API->new_from_hashref(
+        api_href => { ... },
+    );
+    
+    my $client = RPC::ExtDirect::Client->new(
+        host => 'localhost',
+        port => 8080,
+        api  => $api,
+    );
+
+When a local API instance is used, the client object will be available
+immediately. Otherwise, the constructor will block until the 
+L<API declaration|RPC::ExtDirect::Intro/"API declaration"> is retrieved
+and parsed. This may cause a significant delay that depends on the
+underlying transport's default timeout for HTTP requests (60 sec for
+HTTP::Tiny). To avoid that, set the timeout explicitly:
+
+    my $client = RPC::ExtDirect::Client->new(
+        host    => 'localhost',
+        timeout => 1, # This parameter is passed to HTTP::Tiny
+    );
+
+Applying a timeout in the constructor will set it for every request
+made by the client object; if that is not desirable, you can set
+a timeout individually for each request:
+
+    my $client = RPC::ExtDirect::Client->new(
+        host    => 'localhost',
+        timeout => 10, # Initialization may be slow
+    );
+    
+    my $data = $client->call(
+        timeout => 1, # This *should* work fast, or else
+        ...
+    );
+
+For transport modules other than HTTP::Tiny you may have to use a
+different parameter to set the timeout.
+
+=head2 Error handling
+
+RPC::ExtDirect::Client tries to follow the principle of least
+astonishment, and will throw an exception by calling C<Carp::croak>
+whenever it encounters an error. This can happen in any method call:
+
+=over 4
+
+=item *
+
+In constructor, if the remote API declaration retrieval failed or
+the result is garbled;
+
+=item *
+
+In L</call>/L</submit>/L</poll>, if HTTP request failed;
+
+=item *
+
+In L</call>, if the arguments do not conform to the Method's definition;
+
+=item *
+
+In L</call> or L</poll>, if the corresponding API type is not defined,
+etc.
+
+=back
+
+It is strongly recommended to guard calls to the client object in
+C<eval> blocks if you require any kind of error handling besides basic
+error message printed to STDERR:
+
+    my $client = eval { RPC::ExtDirect::Client->new( ... ) }
+        or do { ... # Handle the error };
+    
+    my $data = eval { $client->call( ... ) };
+    
+    if ( $@ ) {
+        ...
+    }
 
 =head1 CLIENT OBJECT INTERFACE
 
@@ -116,12 +212,10 @@ See L<RPC::ExtDirect::Config/remoting_var>.
 JavaScript variable name used to assign Ext.Direct polling API object to.
 See L<RPC::ExtDirect::Config/polling_var>.
 
-=item C<%other>
-
-All other arguments are passed to HTTP::Tiny constructor. See
-L<HTTP::Tiny/new> for more detail.
-
 =back
+
+All other arguments are passed to the transport module constructor. See
+L<HTTP::Tiny/new> for more detail.
 
 =item C<get_api>
 
@@ -168,6 +262,9 @@ in the same format as for constructor, see L</new>.
 
 =back
 
+All other arguments are passed to the transport module constructor. See
+L<HTTP::Tiny/new> for more detail.
+
 =item C<submit>
 
 Instance method. Submits an HTML form request to a
@@ -206,6 +303,9 @@ in the same format as for constructor, see L</new>.
 
 =back
 
+All other arguments are passed to the transport module constructor. See
+L<HTTP::Tiny/new> for more detail.
+
 =item C<upload>
 
 A shortcut for L</submit>, for better readability when uploading files.
@@ -235,6 +335,9 @@ Optional set of cookies for this particular call only. Cookies should be
 in the same format as for constructor, see L</new>.
 
 =back
+
+All other arguments are passed to the transport module constructor. See
+L<HTTP::Tiny/new> for more detail.
 
 =back
 
@@ -325,8 +428,8 @@ on this module.
 
 =head1 BUGS AND LIMITATIONS
 
-There are no known bugs in this module. Please report problems to the
-author, patches are always welcome.
+At this time there are no known bugs in this module. Please report
+problems to the author, patches are always welcome.
 
 Use L<Github tracker|https://github.com/nohuhu/RPC-ExtDirect-Client/issues>
 to open bug reports, this is the easiest and quickest way to get your
