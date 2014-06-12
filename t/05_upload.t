@@ -22,7 +22,6 @@ package main;
 
 use strict;
 use warnings;
-no  warnings 'uninitialized';
 
 use File::Temp 'tempfile';
 use File::Spec;

@@ -14,7 +14,6 @@ package main;
 
 use strict;
 use warnings;
-no  warnings 'uninitialized';
 
 use Test::More tests => 9;
 

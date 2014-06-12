@@ -2,7 +2,6 @@
 
 use strict;
 use warnings;
-no  warnings 'uninitialized';
 
 use RPC::ExtDirect::Config;
 
