@@ -1,3 +1,12 @@
+1.00  Thu Jun 12 21:47:21 2014
+    - Updated to accommodate for the changes in RPC::ExtDirect 3.0
+      and RPC::ExtDirect::Server 1.0
+    - Major internal refactoring and tune-up to support the async
+      client as a subclass (See RPC::ExtDirect::Client::Async)
+    - Many, many improvements and bug fixes
+    - Many new tests
+    - Tons of documentation
+
 0.22  Fri Mar 29 18:35:48 2013
     - Added handling for Methods that do not specify how they need
       their parameters. We assume by-name without strict checking.

@@ -1,4 +1,7 @@
 Changes
+lib/RPC/ExtDirect/Client.pm
+lib/RPC/ExtDirect/Client.pod
+lib/RPC/ExtDirect/Client/API.pm
 Makefile.PL
 MANIFEST
 README
@@ -7,11 +10,10 @@ t/02_exception.t
 t/03_post.t
 t/04_form.t
 t/05_upload.t
-t/06_poll.t
+t/061_poll.t
+t/062_poll.t
+t/063_poll.t
 t/07_cookie_jar.t
 t/08_cookies.t
 t/pod.t
-t/htdocs/.placeholder
-t/lib/util.pm
-lib/RPC/ExtDirect/Client.pm
-lib/RPC/ExtDirect/Client/API.pm
+t/server.pl
