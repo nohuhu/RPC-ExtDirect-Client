@@ -6,6 +6,7 @@
     - Many, many improvements and bug fixes
     - Many new tests
     - Tons of documentation
+    - Compatible with Perl 5.6.2.
 
 0.22  Fri Mar 29 18:35:48 2013
     - Added handling for Methods that do not specify how they need
