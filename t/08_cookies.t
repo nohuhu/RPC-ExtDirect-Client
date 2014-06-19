@@ -175,6 +175,7 @@ sub run_tests {
     $data = $client->submit(
         action  => 'test',
         method  => 'form',
+        arg     => {},
         $cookie_jar ? (cookies => $cookie_jar) : (),
     );
 

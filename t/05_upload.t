@@ -28,6 +28,7 @@ use File::Spec;
 
 use Test::More tests => 8;
 
+use RPC::ExtDirect::Test::Util;
 use RPC::ExtDirect::Server::Util;
 
 BEGIN { use_ok 'RPC::ExtDirect::Client' };
@@ -58,16 +59,14 @@ my $data = eval {
     $client->submit(
         action => 'test',
         method => 'handle_upload',
+        arg    => {},
         upload => \@files,
-        timeout => 99999,
     )
 };
 
-is        $@,        '',            "Upload didn't die";
-unlike    ref $data, qr/Exception/, "Upload result not an exception";
-is_deeply $data,     $exp,          "Upload data match";
-
-exit 0;
+is      $@,        '',            "Upload didn't die";
+unlike  ref $data, qr/Exception/, "Upload result not an exception";
+is_deep $data,     $exp,          "Upload data match";
 
 sub gen_file {
     my ($fh, $filename) = tempfile;

@@ -3,9 +3,11 @@
 use strict;
 use warnings;
 
-use Test::More tests => 3;
+use Test::More tests => 2;
 
-use_ok 'RPC::ExtDirect::Client';
+use RPC::ExtDirect::Test::Util;
+
+use RPC::ExtDirect::Client;
 
 my $cclass = 'RPC::ExtDirect::Client';
 
@@ -34,7 +36,7 @@ SKIP: {
     $options->{headers}->{Cookie}
         = [ sort @{ $options->{headers}->{Cookie} } ];
 
-    is_deeply $options, $expected, "HTTP::Cookies parsing";
+    is_deep $options, $expected, "HTTP::Cookies parsing";
 }
 
 my $options = {};
@@ -45,5 +47,5 @@ $cclass->_parse_cookies($options, $params);
 $options->{headers}->{Cookie}
     = [ sort @{ $options->{headers}->{Cookie} } ];
 
-is_deeply $options, $expected, "Raw cookies parsing";
+is_deep $options, $expected, "Raw cookies parsing";
 

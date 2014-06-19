@@ -9,8 +9,6 @@ use RPC::ExtDirect Action => 'test';
 sub handle_form : ExtDirect(formHandler) {
     my ($class, %arg) = @_;
 
-    delete $arg{_env};
-
     my @fields = grep { !/^file_uploads/ } keys %arg;
 
     my %result;
@@ -26,6 +24,7 @@ use warnings;
 
 use Test::More tests => 8;
 
+use RPC::ExtDirect::Test::Util;
 use RPC::ExtDirect::Server::Util;
 
 BEGIN { use_ok 'RPC::ExtDirect::Client' };
@@ -45,12 +44,14 @@ isa_ok $client, $cclass, 'Right object, too,';
 my $fields = { foo => 'qux', bar => 'baz' };
 
 my $data = eval {
-    $client->submit( action => 'test', method => 'handle_form',
-                     arg    => $fields
+    $client->submit(
+        action => 'test',
+        method => 'handle_form',
+        arg    => $fields,
     )
 };
 
-is        $@,        '',            "Form didn't die";
-unlike    ref $data, qr/Exception/, "Form result not an exception";
-is_deeply $data,     $fields,       "Form data match";
+is      $@,        '',            "Form didn't die";
+unlike  ref $data, qr/Exception/, "Form result not an exception";
+is_deep $data,     $fields,       "Form data match";
 

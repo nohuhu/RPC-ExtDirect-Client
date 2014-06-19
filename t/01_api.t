@@ -7,6 +7,8 @@ use RPC::ExtDirect::Config;
 
 use Test::More tests => 93;
 
+use RPC::ExtDirect::Test::Util;
+
 BEGIN { use_ok 'RPC::ExtDirect::Client::API' };
 
 my $source_js = <<'END_JS';
@@ -120,8 +122,8 @@ for my $action ( @actions ) {
 
         while ( my ( $meth, $exp ) = each %$method ) {
             if ( $meth eq 'params' ) {
-                is_deeply $action->method($mname)->$meth, $exp,
-                          "Action $aname method $mname: $meth";
+                is_deep $action->method($mname)->$meth, $exp,
+                        "Action $aname method $mname: $meth";
             }
             else {
                 is $action->method($mname)->$meth, $exp,

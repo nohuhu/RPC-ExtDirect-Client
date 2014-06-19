@@ -6,16 +6,20 @@ use strict;
 
 use RPC::ExtDirect Action => 'test';
 
-sub dies : ExtDirect(0) {
-    die "Whoa there!\n";
+sub ordered : ExtDirect(3) { shift; [@_] }
+sub named : ExtDirect(params => [qw/ foo bar /]) { shift; [@_] }
+sub no_strict : ExtDirect(params => [qw/ foo /], strict => !1) {
+    shift; [@_]
 }
+sub form : ExtDirect(formHandler) { shift; [@_] }
+sub dies : ExtDirect(0) { die "Whoa there!\n"; }
 
 package main;
 
 use strict;
 use warnings;
 
-use Test::More tests => 9;
+use Test::More tests => 16;
 
 use RPC::ExtDirect::Server::Util;
 
@@ -33,18 +37,84 @@ is     $@,      '',      "Didn't die";
 ok     $client,          'Got client object';
 isa_ok $client, $cclass, 'Right object, too,';
 
-# Try calling nonexistent method
-
+# Try calling a nonexistent method
 my $data = eval {
     $client->call( action => 'test', method => 'nonexistent' )
 };
 
 my $regex = qr/^Method nonexistent is not found in Action test/;
+like $@, $regex, "Nonexistent method";
 
-like $@, $regex, "Nonexistent croaked";
+# Not enough arguments for an ordered method
+$data = eval {
+    $client->call( action => 'test', method => 'ordered', arg => [ 42 ], )
+};
 
-# Try calling method that dies
+$regex = qr/requires 3 argument\(s\) but only 1 are provided/;
+like $@, $regex, "Not enough ordered arguments";
 
+# Wrong type of arguments for an ordered method
+$data = eval {
+    $client->call( action => 'test', method => 'ordered', arg => {}, )
+};
+
+$regex = qr/expects ordered arguments in arrayref/;
+like $@, $regex, "Wrong arguments for ordered";
+
+# Not all specified arguments for a named method
+$data = eval {
+    $client->call(
+        action => 'test',
+        method => 'named',
+        arg    => { foo => 'bar' },
+    )
+};
+
+$regex = qr/parameters: 'foo, bar'; these are missing: 'bar'/;
+like $@, $regex, "Not enough named arguments";
+
+# Not all specified arguments for a non-strict named method
+$data = eval {
+    $client->call(
+        action => 'test',
+        method => 'no_strict',
+        arg    => { bar => 'baz', },
+    )
+};
+
+$regex = qr/parameters: 'foo'; these are missing: 'foo'/;
+like $@, $regex, "Not enough named arguments strict off";
+
+# Wrong argument type for named
+$data = eval {
+    $client->call( action => 'test', method => 'named', arg => [], )
+};
+
+$regex = qr/expects named arguments in hashref/;
+like $@, $regex, "Wrong arguments for named";
+
+# Wrong argument type for formHandler
+$data = eval {
+    $client->submit( action => 'test', method => 'form', arg => [], )
+};
+
+$regex = qr/expects named arguments in hashref/;
+like $@, $regex, "Wrong arguments for formHandler";
+
+# Trying to upload unreadable or nonexisting file
+$data = eval {
+    $client->upload(
+        action => 'test',
+        method => 'form',
+        arg    => {},
+        upload => ['nonexistent_file_with_a_long_name'],
+    )
+};
+
+$regex = qr{Upload entry 'nonexistent_file_with_a_long_name' is not readable};
+like $@, $regex, "Unreadable upload";
+
+# Finally, try calling a method that dies
 $data = eval {
     $client->call( action => 'test', method => 'dies', arg => [], )
 };
