@@ -29,17 +29,17 @@ WriteMakefile(
 
     ($mm_version >= 6.55
         ? ( BUILD_REQUIRES => {
-                'RPC::ExtDirect::Server' => '1.0',
+                'RPC::ExtDirect::Server' => '1.00',
                 'Test::More'             => 0,
             },
             PREREQ_PM => {
-                'RPC::ExtDirect'         => '3.0',
+                'RPC::ExtDirect'         => '3.001',
                 'HTTP::Tiny'             => '0.014',
             },
         )
         : ( PREREQ_PM => {
-                'RPC::ExtDirect::Server' => '1.0',
-                'RPC::ExtDirect'         => '3.0',
+                'RPC::ExtDirect::Server' => '1.00',
+                'RPC::ExtDirect'         => '3.01',
                 'HTTP::Tiny'             => '0.014',
                 'Test::More'             => 0,
             },
