@@ -23,7 +23,7 @@ croak __PACKAGE__." requires RPC::ExtDirect 3.0+"
 # Module version
 #
 
-our $VERSION = '1.00';
+our $VERSION = '1.01';
 
 ### PUBLIC CLASS METHOD (CONSTRUCTOR) ###
 #
@@ -107,10 +107,12 @@ sub sync_request {
     my $self = shift;
     my $type = shift;
     
-    my $tr_class    = $self->transaction_class;
-    my $transaction = $tr_class->new(@_);
+    my $tr_class = $self->transaction_class;
     
-    my $resp = eval { $self->_sync_request($type, $transaction) };
+    my $resp = eval {
+        my $transaction = $tr_class->new(@_);
+        $self->_sync_request($type, $transaction);
+    };
     
     #
     # Internally we throw an exception string enclosed in arrayref,
@@ -374,31 +376,18 @@ sub _normalize_arg {
     
     die ["Method $method_name is not found in Action $action_name"]
         unless $method;
-
-    my $named   = $method->is_named;
-    my $ordered = $method->is_ordered;
-
-    die ["${action_name}->$method_name requires ordered arguments"]
-        if $ordered and 'ARRAY' ne ref $arg;
-
-    die ["${action_name}->$method_name requires named arguments"]
-        if $named and 'HASH' ne ref $arg;
-
-    my $result;
-
-    if ( $named ) {
-        my $params = $method->params;
-
-        @$result{ @$params } = @$arg{ @$params };
+    
+    # This could die with a message that has \n at the end to prevent
+    # file and line being appended. Catch and rethrow in a format
+    # more compatible with what Client does in other places.
+    eval { $method->check_method_arguments($arg) };
+    
+    if ( my $xcpt = $@ ) {
+        $xcpt =~ s/\n$//;
+        die [$xcpt];
     }
-    elsif ( $ordered ) {
-        my $len = $method->len;
 
-        @$result = splice @$arg, 0, $len;
-    }
-    else {
-        $result = $arg;
-    }
+    my $result = $method->prepare_method_arguments( input => $arg );
 
     return $result;
 }
@@ -411,26 +400,61 @@ sub _normalize_arg {
 sub _formalize_arg {
     my ($self, $trans) = @_;
     
-    my $arg    = $trans->arg;
-    my $upload = $trans->upload;
+    my $action_name = $trans->action;
+    my $method_name = $trans->method;
+    my $arg         = $trans->arg;
+    my $upload      = $trans->upload;
+    
+    my $api    = $self->get_api('remoting');
+    my $method = $api->get_method_by_name($action_name, $method_name);
+    
+    die ["Method $method_name is not found in Action $action_name"]
+        unless $method;
+    
+    # formHandler method require arguments in a hashref and will die
+    # with an error if the arguments are missing. However it is often
+    # convenient to call Client->upload() with empty arg but with a
+    # list of file names to upload; it doesn't make a lot of sense to
+    # insist on providing an empty argument hashref just for the sake
+    # of being strict.
+    $arg = $arg || {} if $upload;
+    
+    # This could die with a message that has \n at the end to prevent
+    # file and line being appended. Catch and rethrow in a format
+    # more compatible with what Client does in other places.
+    eval { $method->check_method_arguments($arg) };
+    
+    if ( my $xcpt = $@ ) {
+        $xcpt =~ s/\n$//;
+        die [$xcpt];
+    }
+    
+    # Go over the uploads and check if they're readable; die if not
+    for my $file ( @$upload ) {
+        die ["Upload entry '$file' is not readable"] unless -r $file;
+    }
+    
+    my $result = $method->prepare_method_arguments( input => $arg );
 
     my $fields = {
-        extAction => $trans->action,
-        extMethod => $trans->method,
+        extAction => $action_name,
+        extMethod => $method_name,
         extType   => 'rpc',
         extTID    => $self->next_tid,
     };
 
     $fields->{extUpload} = 'true' if $upload;
 
-    @$fields{ keys %$arg } = values %$arg;
+    @$fields{ keys %$result } = values %$result;
 
     return $fields;
 }
 
 ### PRIVATE INSTANCE METHOD ###
 #
-# Make an HTTP request in synchronous fashion
+# Make an HTTP request in synchronous fashion. Note that we do not
+# guard against exceptions here, they should be propagated upwards
+# to be caught in public sync_request() that calls this one.
 #
 
 sub _sync_request {
