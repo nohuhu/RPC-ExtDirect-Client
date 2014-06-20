@@ -372,7 +372,12 @@ sub _normalize_arg {
     my $arg         = $trans->arg;
     
     my $api    = $self->get_api('remoting');
-    my $method = $api->get_method_by_name($action_name, $method_name);
+    my $action = $api->get_action_by_name($action_name);
+    
+    die ["Action $action_name is not found"]
+        unless $action;
+    
+    my $method = $action->method($method_name);
     
     die ["Method $method_name is not found in Action $action_name"]
         unless $method;

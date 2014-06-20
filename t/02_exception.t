@@ -19,7 +19,7 @@ package main;
 use strict;
 use warnings;
 
-use Test::More tests => 16;
+use Test::More tests => 17;
 
 use RPC::ExtDirect::Server::Util;
 
@@ -37,12 +37,20 @@ is     $@,      '',      "Didn't die";
 ok     $client,          'Got client object';
 isa_ok $client, $cclass, 'Right object, too,';
 
-# Try calling a nonexistent method
+# Try calling a Method in a nonexistent Action
 my $data = eval {
+    $client->call( action => 'nonexistent', method => 'ordered' )
+};
+
+my $regex = qr/^Action nonexistent is not found/;
+like $@, $regex, "Nonexistent action";
+
+# Try calling a nonexistent Method in existing Action
+$data = eval {
     $client->call( action => 'test', method => 'nonexistent' )
 };
 
-my $regex = qr/^Method nonexistent is not found in Action test/;
+$regex = qr/^Method nonexistent is not found in Action test/;
 like $@, $regex, "Nonexistent method";
 
 # Not enough arguments for an ordered method
