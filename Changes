@@ -1,3 +1,10 @@
+1.01  Fri Jun 20 21:18:36 2014
+    - Ext.Direct Method argument checking now happens in the Method
+      itself; Client is updated to take advantage of that
+    - Minimal RPC::ExtDirect version bumped to 3.01 for above changes
+    - Improved tests, added many new ones
+    - Miscellaneous fixes
+
 1.00  Thu Jun 12 21:47:21 2014
     - Updated to accommodate for the changes in RPC::ExtDirect 3.0
       and RPC::ExtDirect::Server 1.0
