@@ -37,7 +37,7 @@ Actions developed in languages other than Perl, or for something else
 altogether.
 
 This client is synchronous, i.e. all method calls are blocking. If you
-need a non-blocking way of working with Ext.Direct, take a look at
+need a non-blocking way of calling an Ext.Direct server, take a look at
 L<RPC::ExtDirect::Client::Async> instead.
 
 Unless configured otherwise, RPC::ExtDirect::Client will use
