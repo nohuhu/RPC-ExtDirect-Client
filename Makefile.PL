@@ -21,28 +21,41 @@ disttest : distdir
 END
 }
 
-my $mm_version = $ExtUtils::MakeMaker::VERSION;
+my $MM_VERSION = $ExtUtils::MakeMaker::VERSION;
+my $github_uri = 'https://github.com/nohuhu/RPC-ExtDirect-Client';
 
 WriteMakefile(
     NAME         => 'RPC::ExtDirect::Client',
     VERSION_FROM => 'lib/RPC/ExtDirect/Client.pm',
-
-    ($mm_version >= 6.55
-        ? ( BUILD_REQUIRES => {
-                'RPC::ExtDirect::Server' => '1.00',
-                'Test::More'             => 0,
+    
+    ($MM_VERSION >= 6.46
+        ? (
+            TEST_REQUIRES => {
+                'RPC::ExtDirect::Server'     => '1.01',
+                'Test::More'                 => '0.82', # for explain()
             },
             PREREQ_PM => {
-                'RPC::ExtDirect'         => '3.001',
-                'HTTP::Tiny'             => '0.014',
+                'RPC::ExtDirect'             => '3.01',
+                'HTTP::Tiny'                 => '0.014',
             },
         )
-        : ( PREREQ_PM => {
-                'RPC::ExtDirect::Server' => '1.00',
-                'RPC::ExtDirect'         => '3.01',
-                'HTTP::Tiny'             => '0.014',
-                'Test::More'             => 0,
-            },
+        : ($MM_VERSION >= 6.55
+            ? ( BUILD_REQUIRES => {
+                    'RPC::ExtDirect::Server' => '1.01',
+                    'Test::More'             => '0.82',
+                },
+                PREREQ_PM => {
+                    'RPC::ExtDirect'         => '3.01',
+                    'HTTP::Tiny'             => '0.014',
+                },
+            )
+            : ( PREREQ_PM => {
+                    'RPC::ExtDirect::Server' => '1.01',
+                    'Test::More'             => '0.82',
+                    'RPC::ExtDirect'         => '3.01',
+                    'HTTP::Tiny'             => '0.014',
+                },
+            )
         )
     ),
 
@@ -50,20 +63,19 @@ WriteMakefile(
     AUTHOR   => 'Alex Tokarev <tokarev@cpan.org>',
     LICENSE  => 'perl',
 
-    ($mm_version >= 6.48
+    ($MM_VERSION >= 6.48
         ? ( MIN_PERL_VERSION => 5.006000, )
         : ()
     ),
 
-    ($mm_version >= 6.46
+    ($MM_VERSION >= 6.46
         ? ( META_MERGE => {
                 resources => {
-                    bugtracker => 'http://github.com/nohuhu/RPC-ExtDirect-Client/issues',
-                    repository => 'http://github.com/nohuhu/RPC-ExtDirect-Client',
+                    bugtracker => "$github_uri/issues",
+                    repository => $github_uri,
                 },
             },
         )
         : ()
     ),
 );
-
