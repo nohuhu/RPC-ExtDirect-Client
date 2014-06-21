@@ -26,9 +26,14 @@ use warnings;
 
 use Test::More tests => 7;
 
+use lib 't/lib';
 use RPC::ExtDirect::Test::Util;
 use RPC::ExtDirect::Server::Util;
+use RPC::ExtDirect::Client::Test::Util;
 use RPC::ExtDirect::Client;
+
+# Clean up %ENV so that HTTP::Tiny does not accidentally connect to a proxy
+clean_env;
 
 # Host/port in @ARGV means there's server listening elsewhere
 my ($host, $port) = maybe_start_server(static_dir => 't/htdocs');
