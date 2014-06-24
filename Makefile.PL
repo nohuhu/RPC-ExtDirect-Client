@@ -1,4 +1,7 @@
 use 5.006000;
+use strict;
+use warnings;
+
 use ExtUtils::MakeMaker;
 
 # Add the `devtest` target to run regression and POD tests in one go
@@ -28,7 +31,7 @@ WriteMakefile(
     NAME         => 'RPC::ExtDirect::Client',
     VERSION_FROM => 'lib/RPC/ExtDirect/Client.pm',
     
-    ($MM_VERSION >= 6.46
+    ($MM_VERSION >= 6.64
         ? (
             TEST_REQUIRES => {
                 'RPC::ExtDirect::Server'     => '1.01',
