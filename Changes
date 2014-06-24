@@ -1,3 +1,7 @@
+1.02  Mon Jun 23 17:49:55 2014
+    - Fixed a typo in Makefile.PL that caused build failure when
+      ExtUtils::MakeMaker version happened to be between 6.46 and 6.64
+
 1.01  Fri Jun 20 21:18:36 2014
     - Ext.Direct Method argument checking now happens in the Method
       itself; Client is updated to take advantage of that
