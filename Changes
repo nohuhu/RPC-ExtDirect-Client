@@ -1,3 +1,7 @@
+1.03  Tue Jun 24 21:23:54 2014
+    - Client initialization with a local API instance works properly now,
+      with a bunch of tests added
+
 1.02  Mon Jun 23 17:49:55 2014
     - Fixed a typo in Makefile.PL that caused build failure when
       ExtUtils::MakeMaker version happened to be between 6.46 and 6.64
