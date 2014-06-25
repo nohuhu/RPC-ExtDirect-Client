@@ -168,7 +168,7 @@ used.
 
 =item C<host>
 
-Server's hostname or IP address. This parameter is mandatory.
+Server's host name or IP address. This parameter is mandatory.
 
 =item C<port>
 
@@ -289,7 +289,8 @@ parameter is mandatory.
 
 =item C<arg>
 
-A hashref of the Method arguments. This parameter is mandatory.
+A hashref of the Method arguments. This parameter is mandatory, unless
+L</upload> is specified.
 
 =item C<upload>
 
@@ -371,12 +372,13 @@ provided:
 
 =item C<config>
 
-Return the current L<RPC::ExtDirect::Config> instance held in the client
-object, or set a new one.
+Return the current L<RPC::ExtDirect::Config> instance held in the
+client object, or set a new one.
 
 =item C<host>
 
-Return the current hostname or IP address of the server, or set a new one.
+Return the current host name or IP address of the server, or set
+a new one.
 
 =item C<port>
 
