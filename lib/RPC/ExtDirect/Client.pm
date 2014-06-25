@@ -45,6 +45,7 @@ sub new {
     }, $class;
     
     $self->_decorate_config($config);
+    $self->_decorate_api($api) if $api;
     
     my @config_params = qw/
         api_path router_path poll_path remoting_var polling_var
@@ -55,7 +56,7 @@ sub new {
             if exists $params{ $key };
     }
     
-    my @our_params = qw/ host port cv cookies /;
+    my @our_params = qw/ host port cv cookies api_cb /;
     
     @$self{ @our_params } = delete @params{ @our_params };
     
@@ -167,9 +168,9 @@ sub get_api {
 #
 
 sub set_api {
-    my ($self, $api) = @_;
+    my ($self, $api, $type) = @_;
     
-    my $type = $api->type;
+    $type ||= $api->type;
     
     $self->{api}->{$type} = $api;
 }
@@ -197,7 +198,7 @@ sub transaction_class { 'RPC::ExtDirect::Client::Transaction' }
 #
 
 RPC::ExtDirect::Util::Accessor->mk_accessor(
-    simple => [qw/ config host port cv cookies http_params /],
+    simple => [qw/ config host port cv cookies http_params api_cb /],
 );
 
 ############## PRIVATE METHODS BELOW ##############
@@ -245,6 +246,20 @@ sub _decorate_config {
 
 ### PRIVATE INSTANCE METHOD ###
 #
+# Make sure that the API instance passed to us is a subclass
+# of RPC::ExtDirect::Client::API
+#
+
+sub _decorate_api {
+    my ($self, $api) = @_;
+    
+    my $api_class = $self->config->api_class_client;
+    
+    bless $api, $api_class unless $api->isa($api_class);
+}
+
+### PRIVATE INSTANCE METHOD ###
+#
 # Initialize API declaration.
 #
 # The two-step between _init_api and _import_api is to allow
@@ -256,12 +271,27 @@ sub _init_api {
     my ($self, $api) = @_;
     
     if ( $api ) {
-        $self->set_api($api);
+        $self->_assign_api($api);
     }
     else {
         my $api_js = $self->_get_api();
         
         $self->_import_api($api_js);
+    }
+}
+
+### PRIVATE INSTANCE METHOD ###
+#
+# Assign API object to the corresponding slots
+#
+
+sub _assign_api {
+    my ($self, $api) = @_;
+    
+    $self->set_api($api, 'remoting');
+    
+    if ( $api->get_poll_handlers ) {
+        $self->set_api($api, 'polling');
     }
 }
 

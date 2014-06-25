@@ -37,6 +37,12 @@ REMOTING_API = {
     "type":"remoting",
     "url":"/extdirectrouter"
 };
+Ext.direct.Manager.addProvider(REMOTING_API);
+POLLING_API = {
+    "type":"polling",
+    "url":"/extdirectevents"
+};
+Ext.direct.Manager.addProvider(POLLING_API);
 END_JS
 
 my $config = RPC::ExtDirect::Config->new(
