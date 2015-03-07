@@ -222,26 +222,48 @@ sub _exception {
 ### PRIVATE INSTANCE METHOD ###
 #
 # Add the Client-specific accessors to a Config instance
+# and set defaults
 #
+
+my %std_config = (
+    api_class_client => 'RPC::ExtDirect::Client::API',
+    transport_class  => 'HTTP::Tiny',
+);
 
 sub _decorate_config {
     my ($self, $config) = @_;
     
     $config->add_accessors(
         overwrite => 1,
-        simple    => [qw/ api_class_client transport_class /],
+        simple    => [ keys %std_config ],
     );
     
-    $config->api_class_client('RPC::ExtDirect::Client::API')
-        unless $config->has_api_class_client;
+    for my $key ( keys %std_config ) {
+        my $predicate = "has_${key}";
+        
+        $config->$key( $std_config{ $key } )
+            unless $config->$predicate;
+        
+        # This is the best place to load the classes, too
+        # since we only want to do this once.
+        eval "require " . $config->$key;
+    }
     
-    $config->transport_class('HTTP::Tiny')
-        unless $config->has_transport_class;
+    my $std_m_class = 'RPC::ExtDirect::Client::API::Method';
     
-    # This is the best place to load the classes since we only
-    # want to do this once.
-    eval "require " . $config->api_class_client;
-    eval "require " . $config->transport_class;
+    $config->api_method_class($std_m_class)
+        if $config->_is_default('api_method_class');
+    
+    # Client uses a flavor of API::Method with disabled
+    # metadata arg checks; since the user might have set
+    # the config value we want to make sure the class
+    # has relevant overrides.
+    my $actual_m_class = $config->api_method_class;
+    
+    croak  __PACKAGE__ . " is configured to use API Method class ".
+           "$actual_m_class that is not a subclass of $std_m_class"
+        unless $actual_m_class eq $std_m_class ||
+               $actual_m_class->isa($std_m_class);
 }
 
 ### PRIVATE INSTANCE METHOD ###
@@ -395,22 +417,9 @@ sub _get_uri {
 #
 
 sub _normalize_arg {
-    my ($self, $trans) = @_;
+    my ($self, $method, $trans) = @_;
     
-    my $action_name = $trans->action;
-    my $method_name = $trans->method;
-    my $arg         = $trans->arg;
-    
-    my $api    = $self->get_api('remoting');
-    my $action = $api->get_action_by_name($action_name);
-    
-    die ["Action $action_name is not found"]
-        unless $action;
-    
-    my $method = $action->method($method_name);
-    
-    die ["Method $method_name is not found in Action $action_name"]
-        unless $method;
+    my $arg = $trans->arg;
     
     # This could die with a message that has \n at the end to prevent
     # file and line being appended. Catch and rethrow in a format
@@ -424,6 +433,29 @@ sub _normalize_arg {
 
     my $result = $method->prepare_method_arguments( input => $arg );
 
+    return $result;
+}
+
+### PRIVATE INSTANCE METHOD ###
+#
+# Normalize passed metadata to conform to Method's spec
+#
+
+sub _normalize_metadata {
+    my ($self, $method, $trans) = @_;
+    
+    my $meta = $trans->metadata;
+    
+    # See _normalize_arg above
+    eval { $method->check_method_metadata($meta) };
+    
+    if ( my $xcpt = $@ ) {
+        $xcpt =~ s/\n$//;
+        die [$xcpt];
+    }
+    
+    my $result = $method->prepare_method_metadata( metadata => $meta );
+    
     return $result;
 }
 
@@ -521,11 +553,29 @@ sub _sync_request {
 sub _prepare_call_request {
     my ($self, $transaction) = @_;
     
-    my $action     = $transaction->action;
-    my $method     = $transaction->method;
-    my $actual_arg = $self->_normalize_arg($transaction);
-    my $uri        = $self->_get_uri('remoting');
-    my $post_body  = $self->_encode_post_body($action, $method, $actual_arg);
+    my $action_name = $transaction->action;
+    my $method_name = $transaction->method;
+    
+    my $api    = $self->get_api('remoting');
+    my $action = $api->get_action_by_name($action_name);
+    
+    die ["Action $action_name is not found"]
+        unless $action;
+    
+    my $method = $action->method($method_name);
+    
+    die ["Method $method_name is not found in Action $action_name"]
+        unless $method;
+    
+    my $actual_arg = $self->_normalize_arg($method, $transaction);
+    my $metadata   = $self->_normalize_metadata($method, $transaction);
+    
+    my $post_body = $self->_encode_post_body(
+        action   => $action_name,
+        method   => $method_name,
+        data     => $actual_arg,
+        metadata => $metadata,
+    );
     
     # HTTP params is a union between transaction params and client params.
     my $http_params = $self->_merge_params($transaction);
@@ -535,6 +585,8 @@ sub _prepare_call_request {
     };
 
     $self->_parse_cookies($request_options, $http_params);
+
+    my $uri = $self->_get_uri('remoting');
     
     return (
         $uri,
@@ -612,18 +664,34 @@ sub _prepare_poll_request {
 # Create POST payload body
 #
 
-sub _encode_post_body {
-    my ($self, $action, $method, $arg) = @_;
-
+sub _create_post_payload {
+    my ($self, %arg) = @_;
+    
     my $href = {
-        action => $action,
-        method => $method,
-        data   => $arg,
         type   => 'rpc',
         tid    => $self->next_tid,
+        action => $arg{action},
+        method => $arg{method},
+        data   => $arg{data},
     };
+    
+    $href->{metadata} = $arg{metadata}
+        if exists $arg{metadata};
+    
+    return $href;
+}
 
-    return JSON->new->utf8(1)->encode($href);
+### PRIVATE INSTANCE METHOD ###
+#
+# Encode post payload body
+#
+
+sub _encode_post_body {
+    my $self = shift;
+    
+    my $payload = $self->_create_post_payload(@_);
+
+    return JSON->new->utf8(1)->encode($payload);
 }
 
 ### PRIVATE INSTANCE METHOD ###
@@ -864,7 +932,7 @@ sub _parse_raw_cookies {
 package
     RPC::ExtDirect::Client::Transaction;
 
-my @fields = qw/ action method arg upload cookies /;
+my @fields = qw/ action method arg upload cookies metadata /;
 
 sub new {
     my ($class, %params) = @_;
