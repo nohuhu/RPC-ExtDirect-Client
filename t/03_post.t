@@ -1,33 +1,5 @@
 # Test Ext.Direct POST request handling
 
-package test::class;
-
-use strict;
-
-use RPC::ExtDirect Action => 'test';
-
-sub ordered : ExtDirect(3) {
-    my $class = shift;
-
-    return [ splice @_, 0, 3 ];
-}
-
-sub named : ExtDirect(params => ['arg1', 'arg2', 'arg3']) {
-    my ($class, %arg) = @_;
-
-    return { %arg };
-}
-
-sub named_no_strict : ExtDirect(params => ['arg1', 'arg2'], strict => !1) {
-    my ($class, %arg) = @_;
-
-    return { %arg };
-}
-
-sub dies : ExtDirect(0) { die "Whoa there!\n"; }
-
-package main;
-
 use strict;
 use warnings;
 
@@ -38,33 +10,32 @@ use RPC::ExtDirect::Test::Util;
 use RPC::ExtDirect::Server::Util;
 use RPC::ExtDirect::Client::Test::Util;
 
+use test::class;
 use RPC::ExtDirect::Test::Pkg::Meta;
 
 use RPC::ExtDirect::Client;
 
-my $cclass = 'RPC::ExtDirect::Client';
+my $tests = eval do { local $/; <DATA>; }           ## no critic
+    or die "Can't eval DATA: $@";
+
+plan tests => 4 + (3 * @$tests);
 
 # Clean up %ENV so that HTTP::Tiny does not accidentally connect to a proxy
 clean_env;
 
 # Host/port in @ARGV means there's server listening elsewhere
 my ($host, $port) = maybe_start_server(static_dir => 't/htdocs');
-
-my $tests = eval do { local $/; <DATA>; }           ## no critic
-    or die "Can't eval DATA: $@";
-
-# maybe_start_server will leave arguments it doesn't know about
-my %run_only = map { $_ => 1 } @ARGV;
-
-plan tests => 4 + (3 * @$tests);
-
 ok $port, "Got host: $host and port: $port";
 
+my $cclass = 'RPC::ExtDirect::Client';
 my $client = eval { $cclass->new( host => $host, port => $port,) };
 
 is     $@,      '',      "Didn't die";
 ok     $client,          'Got client object';
 isa_ok $client, $cclass, 'Right object, too,';
+
+# maybe_start_server will leave arguments it doesn't know about
+my %run_only = map { $_ => 1 } @ARGV;
 
 TEST:
 for my $test ( @$tests ) {
@@ -92,10 +63,8 @@ for my $test ( @$tests ) {
     is $@, '', "$name: didn't die";
     
     if ( $error ) {
-        my $message = $have->message;
-        
-        like $have_ref, qr/Exception/, "$name: exception type";
-        like $message,  $error,        "$name: exception regex";
+        like $have_ref,       qr/Exception/, "$name: exception type";
+        like $have->message,  $error,        "$name: exception regex";
     }
     else {
         unlike  $have_ref, qr/Exception/, "$name: no exception";
@@ -104,7 +73,9 @@ for my $test ( @$tests ) {
 }
 
 __DATA__
-#line 105
+#line 76
+# This data should always be synchronized with the corresponding section
+# in RPC::ExtDirect::Client::Async t/03_post.t
 [{
     name   => 'Ordered arguments',
     action => 'test',

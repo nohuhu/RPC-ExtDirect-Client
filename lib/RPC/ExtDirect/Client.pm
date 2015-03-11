@@ -5,9 +5,11 @@ use warnings;
 no  warnings 'uninitialized';
 
 use Carp;
+use JSON;
 
 use File::Spec;
 
+use RPC::ExtDirect::Util ();
 use RPC::ExtDirect::Config;
 use RPC::ExtDirect;
 
@@ -465,18 +467,10 @@ sub _normalize_metadata {
 #
 
 sub _formalize_arg {
-    my ($self, $trans) = @_;
+    my ($self, $method, $trans) = @_;
     
-    my $action_name = $trans->action;
-    my $method_name = $trans->method;
-    my $arg         = $trans->arg;
-    my $upload      = $trans->upload;
-    
-    my $api    = $self->get_api('remoting');
-    my $method = $api->get_method_by_name($action_name, $method_name);
-    
-    die ["Method $method_name is not found in Action $action_name"]
-        unless $method;
+    my $arg    = $trans->arg;
+    my $upload = $trans->upload;
     
     # formHandler method require arguments in a hashref and will die
     # with an error if the arguments are missing. However it is often
@@ -496,25 +490,57 @@ sub _formalize_arg {
         die [$xcpt];
     }
     
+    my $fields = {
+        extAction => $method->action,
+        extMethod => $method->name,
+        extType   => 'rpc',
+        extTID    => $self->next_tid,
+    };
+
     # Go over the uploads and check if they're readable; die if not
     for my $file ( @$upload ) {
         die ["Upload entry '$file' is not readable"] unless -r $file;
     }
     
-    my $result = $method->prepare_method_arguments( input => $arg );
-
-    my $fields = {
-        extAction => $action_name,
-        extMethod => $method_name,
-        extType   => 'rpc',
-        extTID    => $self->next_tid,
-    };
-
     $fields->{extUpload} = 'true' if $upload;
 
-    @$fields{ keys %$result } = values %$result;
+    my $actual_arg = $method->prepare_method_arguments( input => $arg );
+    
+    @$fields{ keys %$actual_arg } = values %$actual_arg;
+
+    # This will die in approved format, so no outer eval
+    my $meta_json = $self->_formalize_metadata($method, $trans);
+    
+    $fields->{metadata} = $meta_json if $meta_json;
 
     return $fields;
+}
+
+### PRIVATE INSTANCE METHOD ###
+#
+# Normalize passed metadata to conform to Method's spec
+# and encode in JSON to be submitted in a form POST
+#
+
+sub _formalize_metadata {
+    my ($self, $method, $transaction) = @_;
+    
+    my $meta_json;
+    
+    # This will die according to plan so no outer eval
+    my $metadata = $self->_normalize_metadata($method, $transaction);
+    
+    if ( $metadata ) {
+        # This won't die according to plan :(
+        $meta_json = eval { JSON::to_json($metadata) };
+    
+        if ( $@ ) {
+            my $xcpt = RPC::ExtDirect::Util::clean_error_message($@);
+            die [$xcpt];
+        }
+    }
+    
+    return $meta_json;
 }
 
 ### PRIVATE INSTANCE METHOD ###
@@ -559,8 +585,7 @@ sub _prepare_call_request {
     my $api    = $self->get_api('remoting');
     my $action = $api->get_action_by_name($action_name);
     
-    die ["Action $action_name is not found"]
-        unless $action;
+    die ["Action $action_name is not found"] unless $action;
     
     my $method = $action->method($method_name);
     
@@ -605,16 +630,31 @@ sub _prepare_call_request {
 sub _prepare_form_request {
     my ($self, $transaction) = @_;
     
-    my $uri    = $self->_get_uri('remoting');
-    my $fields = $self->_formalize_arg($transaction);
+    my $action_name = $transaction->action;
+    my $method_name = $transaction->method;
+    
+    my $api = $self->get_api('remoting');
+    my $action = $api->get_action_by_name($action_name);
+    
+    die ["Action $action_name is not found"] unless $action;
+    
+    my $method = $action->method($method_name);
+    
+    die ["Method $method_name is not found in Action $action_name"]
+        unless $method;
+    
+    my $fields = $self->_formalize_arg($method, $transaction);
     my $upload = $transaction->upload;
     
-    my $ct = $upload ? 'multipart/form-data; boundary='.$self->_get_boundary
-           :           'application/x-www-form-urlencoded; charset=utf-8'
-           ;
-    my $form_body = $upload ? $self->_www_form_multipart($fields, $upload)
-                  :           $self->_www_form_urlencode($fields)
-                  ;
+    my $form_body
+        = $upload ? $self->_www_form_multipart($fields, $upload)
+        :           $self->_www_form_urlencode($fields)
+        ;
+    
+    my $ct
+        = $upload ? 'multipart/form-data; boundary='.$self->_get_boundary
+        :           'application/x-www-form-urlencoded; charset=utf-8'
+        ;
     
     my $request_options = {
         headers => { 'Content-Type' => $ct, },
@@ -623,6 +663,8 @@ sub _prepare_form_request {
     my $http_params = $self->_merge_params($transaction);
     
     $self->_parse_cookies($request_options, $http_params);
+    
+    my $uri = $self->_get_uri('remoting');
     
     return (
         $uri,

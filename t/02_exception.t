@@ -1,55 +1,40 @@
 # Test Ext.Direct exception handling
 
-package test::class;
-
-use strict;
-
-use RPC::ExtDirect Action => 'test';
-
-sub ordered : ExtDirect(3) { shift; [@_] }
-sub named : ExtDirect(params => [qw/ foo bar /]) { shift; [@_] }
-sub no_strict : ExtDirect(params => [qw/ foo /], strict => !1) {
-    shift; [@_]
-}
-sub form : ExtDirect(formHandler) { shift; [@_] }
-
-package main;
-
 use strict;
 use warnings;
 
 use Test::More;
 
-use lib 't/lib';
-use RPC::ExtDirect::Server::Util;
-use RPC::ExtDirect::Client::Test::Util;
-use RPC::ExtDirect::Test::Pkg::Meta;
-
 use RPC::ExtDirect::Client;
 
-my $cclass = 'RPC::ExtDirect::Client';
+use RPC::ExtDirect::Server::Util;
+use RPC::ExtDirect::Test::Pkg::Meta;
+
+use lib 't/lib';
+use test::class;
+use RPC::ExtDirect::Client::Test::Util;
+
+my $tests = eval do { local $/; <DATA>; }           ## no critic
+    or die "Can't eval DATA: $@";
+
+plan tests => 4 + @$tests;
 
 # Clean up %ENV so that HTTP::Tiny does not accidentally connect to a proxy
 clean_env;
 
 # Host/port in @ARGV means there's server listening elsewhere
 my ($host, $port) = maybe_start_server(static_dir => 't/htdocs');
-
-my $tests = eval do { local $/; <DATA>; }           ## no critic
-    or die "Can't eval DATA: $@";
-
-# maybe_start_server will leave arguments it doesn't know about
-my %run_only = map { $_ => 1 } @ARGV;
-
-plan tests => 4 + @$tests;
-
 ok $port, "Got host: $host and port: $port";
 
+my $cclass = 'RPC::ExtDirect::Client';
 my $client = eval { $cclass->new( host => $host, port => $port,) };
 
 is     $@,      '',      "Didn't die";
 ok     $client,          'Got client object';
 isa_ok $client, $cclass, 'Right object, too,';
+
+# maybe_start_server will leave arguments it doesn't know about
+my %run_only = map { $_ => 1 } @ARGV;
 
 TEST:
 for my $test ( @$tests ) {
@@ -79,7 +64,9 @@ for my $test ( @$tests ) {
 }
 
 __DATA__
-#line 140
+#line 67
+# This data should be always kept synchronized with the corresponding
+# section in RPC::ExtDirect::Client::Async t/02_exception.t
 [{
     name   => 'Nonexistent Action',
     action => 'nonexistent',
@@ -106,14 +93,14 @@ __DATA__
     name   => 'Named Method strict, not enough arguments',
     action => 'test',
     method => 'named',
-    arg    => { foo => 'bar' },
-    error  => qr/parameters: 'foo, bar'; these are missing: 'bar'/,
+    arg    => { arg1 => 'foo', arg2 => 'bar', },
+    error  => qr/parameters: 'arg1, arg2, arg3'; these are missing: 'arg3'/,
 }, {
     name   => 'Named Method !strict, not enough arguments',
     action => 'test',
-    method => 'no_strict',
-    arg    => { bar => 'baz', },
-    error  => qr/parameters: 'foo'; these are missing: 'foo'/,
+    method => 'named_no_strict',
+    arg    => { arg1 => 'baz', },
+    error  => qr/parameters: 'arg1, arg2'; these are missing: 'arg2'/,
 }, {
     name   => 'Named Method, wrong argument type',
     action => 'test',

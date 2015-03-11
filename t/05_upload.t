@@ -1,39 +1,20 @@
 # Test Ext.Direct form POST/upload request handling
 
-package test::class;
-
-use strict;
-
-use RPC::ExtDirect Action => 'test';
-
-sub handle_upload : ExtDirect(formHandler) {
-    my ($class, %arg) = @_;
-
-    my @uploads = @{ $arg{file_uploads} };
-
-    my @result
-        = map { { name => $_->{basename}, size => $_->{size} } }
-              @uploads;
-
-    return \@result;
-}
-
-package main;
-
 use strict;
 use warnings;
 
 use File::Temp 'tempfile';
 use File::Spec;
 
-use Test::More tests => 8;
+use Test::More tests => 7;
 
 use lib 't/lib';
+use test::class;
 use RPC::ExtDirect::Test::Util;
 use RPC::ExtDirect::Server::Util;
 use RPC::ExtDirect::Client::Test::Util;
 
-BEGIN { use_ok 'RPC::ExtDirect::Client' };
+use RPC::ExtDirect::Client;
 
 # Clean up %ENV so that HTTP::Tiny does not accidentally connect to a proxy
 clean_env;
