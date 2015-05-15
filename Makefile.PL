@@ -24,61 +24,59 @@ disttest : distdir
 END
 }
 
-my $MM_VERSION = $ExtUtils::MakeMaker::VERSION;
-my $github_uri = 'https://github.com/nohuhu/RPC-ExtDirect-Client';
+my $MM_VERSION  = $ExtUtils::MakeMaker::VERSION;
+my $github_repo = 'https://github.com/nohuhu/RPC-ExtDirect-Client';
+
+my %CORE_REQ = (
+    'RPC::ExtDirect' => '3.21',
+    'HTTP::Tiny'     => '0.014',
+);
+
+my %TEST_REQ = (
+    'Test::More'             => '0.82', # for explain()
+    'CGI::ExtDirect'         => '3.20',
+    'RPC::ExtDirect::Server' => '1.20',
+);
 
 WriteMakefile(
     NAME         => 'RPC::ExtDirect::Client',
     VERSION_FROM => 'lib/RPC/ExtDirect/Client.pm',
+    ABSTRACT     => 'Ext.Direct client in Perl',
+    AUTHOR       => 'Alex Tokarev <tokarev@cpan.org>',
+    LICENSE      => 'perl',
     
     ($MM_VERSION >= 6.64
         ? (
-            TEST_REQUIRES => {
-                'RPC::ExtDirect::Server'     => '1.01',
-                'Test::More'                 => '0.82', # for explain()
-            },
-            PREREQ_PM => {
-                'RPC::ExtDirect'             => '3.01',
-                'HTTP::Tiny'                 => '0.014',
-            },
+            TEST_REQUIRES => \%TEST_REQ,
+            PREREQ_PM     => \%CORE_REQ,
         )
-        : ($MM_VERSION >= 6.55
-            ? ( BUILD_REQUIRES => {
-                    'RPC::ExtDirect::Server' => '1.01',
-                    'Test::More'             => '0.82',
-                },
-                PREREQ_PM => {
-                    'RPC::ExtDirect'         => '3.01',
-                    'HTTP::Tiny'             => '0.014',
-                },
-            )
-            : ( PREREQ_PM => {
-                    'RPC::ExtDirect::Server' => '1.01',
-                    'Test::More'             => '0.82',
-                    'RPC::ExtDirect'         => '3.01',
-                    'HTTP::Tiny'             => '0.014',
-                },
-            )
-        )
+        : (
+            ($MM_VERSION >= 6.5503
+                ? (
+                    BUILD_REQUIRES => \%TEST_REQ,
+                    PREREQ_PM      => \%CORE_REQ,
+                )
+                : (
+                    PREREQ_PM => {
+                        %TEST_REQ,
+                        %CORE_REQ,
+                    },
+                )
+            ),
+        ),
     ),
-
-    ABSTRACT => 'Ext.Direct client in Perl',
-    AUTHOR   => 'Alex Tokarev <tokarev@cpan.org>',
-    LICENSE  => 'perl',
-
-    ($MM_VERSION >= 6.48
-        ? ( MIN_PERL_VERSION => 5.006000, )
-        : ()
-    ),
+    
+    ($MM_VERSION >= 6.48 ? ( MIN_PERL_VERSION => 5.006000, ) : ()),
 
     ($MM_VERSION >= 6.46
         ? ( META_MERGE => {
                 resources => {
-                    bugtracker => "$github_uri/issues",
-                    repository => $github_uri,
+                    bugtracker => "$github_repo/issues",
+                    repository =>  $github_repo,
                 },
             },
         )
         : ()
     ),
 );
+
