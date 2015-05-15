@@ -20,10 +20,11 @@ RPC::ExtDirect::Client - Ext.Direct client in Perl
     my $client = RPC::ExtDirect::Client->new(host => 'localhost');
     
     my $result = $client->call(
-        action  => 'Action',
-        method  => 'Method',
-        arg     => [ 'foo', 'bar' ],
-        cookies => { foo => 'bar' },
+        action   => 'Action',
+        method   => 'Method',
+        arg      => [ 'foo', 'bar' ],
+        cookies  => { foo => 'bar' },
+        metadata => { baz => 'qux' },
     );
 
 =head1 DESCRIPTION
@@ -255,6 +256,11 @@ parameters or hashref for named parameters. This parameter is mandatory
 even for Methods that accept no arguments; in such case, pass an empty
 arrayref.
 
+=item C<metadata>
+
+Ext.Direct Method metadata; use arrayref for methods that accept ordered
+metadata or hashref for named metadata. Metadata is always optional.
+
 =item C<cookies>
 
 Optional set of cookies for this particular call only. Cookies should be
@@ -291,6 +297,11 @@ parameter is mandatory.
 
 A hashref of the Method arguments. This parameter is mandatory, unless
 L</upload> is specified.
+
+=item C<metadata>
+
+A hash- or arrayref of Method metadata. This parameter is always
+optional.
 
 =item C<upload>
 
@@ -441,7 +452,7 @@ issue fixed.
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (c) 2012-2014 Alex Tokarev E<lt>tokarev@cpan.orgE<gt>.
+Copyright (c) 2012-2015 Alex Tokarev E<lt>tokarev@cpan.orgE<gt>.
 
 This module is free software; you can redistribute it and/or modify it
 under the same terms as Perl itself. See L<perlartistic>.
