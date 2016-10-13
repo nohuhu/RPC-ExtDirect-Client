@@ -763,7 +763,9 @@ sub _www_form_multipart {
 
     my $result;
 
-    while ( my ($field, $value) = each %$arg ) {
+    foreach my $field (keys %$arg) {
+        my $value = $arg->{$field};
+        
         $result .= $boundary                . $CRLF;
         $result .= sprintf($format, $field) . $CRLF.$CRLF;
         $result .= $value                   . $CRLF;
