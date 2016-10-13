@@ -27,7 +27,7 @@ my ($host, $port) = maybe_start_server(static_dir => 't/htdocs');
 ok $port, "Got host: $host and port: $port";
 
 my $cclass = 'RPC::ExtDirect::Client';
-my $client = eval { $cclass->new( host => $host, port => $port,) };
+my $client = eval { $cclass->new( host => $host, port => $port, timeout => 1, ) };
 
 is     $@,      '',      "Didn't die";
 ok     $client,          'Got client object';

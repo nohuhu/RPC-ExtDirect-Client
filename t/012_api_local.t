@@ -40,6 +40,7 @@ my $client = eval {
     $cclass->new(
         host => 'localhost', # should work
         api  => $api,
+        timeout => 1,
     )
 };
 

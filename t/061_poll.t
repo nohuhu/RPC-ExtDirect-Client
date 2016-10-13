@@ -28,7 +28,7 @@ clean_env;
 my ($host, $port) = maybe_start_server(static_dir => 't/htdocs');
 ok $port, "Got host: $host and port: $port";
 
-my $client = RPC::ExtDirect::Client->new( host => $host, port => $port,);
+my $client = RPC::ExtDirect::Client->new( host => $host, port => $port, timeout => 1, );
 
 my @data = $client->poll();
 

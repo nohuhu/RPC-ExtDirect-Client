@@ -41,7 +41,7 @@ ok $port, "Got host: $host and port: $port";
 
 my $cclass = 'RPC::ExtDirect::Client';
 
-my $client = $cclass->new( host => $host, port => $port,);
+my $client = $cclass->new( host => $host, port => $port, timeout => 1, );
 
 my $tests = $test::class::EVENTS;
 

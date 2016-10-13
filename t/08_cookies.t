@@ -76,6 +76,8 @@ my $client = RPC::ExtDirect::Client->new(
     host    => $host,
     port    => $port,
     cookies => $expected_data,
+    keep_alive => !1,
+    timeout => 1,
 );
 
 run_tests(
@@ -89,6 +91,8 @@ run_tests(
 $client = RPC::ExtDirect::Client->new(
     host        => 'localhost',
     port        => $port,
+    keep_alive => !1,
+    timeout => 1,
 );
 
 $expected_data = {
@@ -148,6 +152,8 @@ SKIP: {
     $client = RPC::ExtDirect::Client->new(
         host => $host,
         port => $port,
+        keep_alive => !1,
+        timeout => 1,
     );
 
     run_tests(
@@ -167,7 +173,7 @@ sub run_tests {
     my $desc           = $params{desc};
     my $expected_data  = $params{expected_data};
     my $expected_event = $params{expected_event};
-
+    
     my $data = $client->call(
         action  => 'test',
         method  => 'ordered',
