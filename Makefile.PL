@@ -28,14 +28,14 @@ my $MM_VERSION  = $ExtUtils::MakeMaker::VERSION;
 my $github_repo = 'https://github.com/nohuhu/RPC-ExtDirect-Client';
 
 my %CORE_REQ = (
-    'RPC::ExtDirect' => '3.21',
+    'RPC::ExtDirect' => '3.24',
     'HTTP::Tiny'     => '0.014',
 );
 
 my %TEST_REQ = (
     'Test::More'             => '0.82', # for explain()
-    'CGI::ExtDirect'         => '3.20',
-    'RPC::ExtDirect::Server' => '1.20',
+    'CGI::ExtDirect'         => '3.24',
+    'RPC::ExtDirect::Server' => '1.24',
 );
 
 WriteMakefile(
