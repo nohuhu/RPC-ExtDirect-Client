@@ -6,6 +6,7 @@ lib/RPC/ExtDirect/Client/API/Method.pm
 Makefile.PL
 MANIFEST
 README
+t/010_params.t
 t/011_api_remote.t
 t/012_api_local.t
 t/02_exception.t

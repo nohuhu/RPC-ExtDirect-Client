@@ -1,3 +1,10 @@
+1.24  Wed Oct 12 22:02:14 PDT 2016
+    - Added a client option to specify connection protocol other than HTTP
+    - Connection timeout in unit tests lowered to 1 second
+    - Fixed tests to use ref_ok instead of isa_ok
+    - Refactored Client.pm to avoid using `each` hash iterator
+    - Version bumped to 1.24 to align with Server and core modules
+
 1.20  Thu May 14 22:10:34 PDT 2015
     - Updated to support metadata feature in RPC::ExtDirect 3.20+
     - More tests, as usual
