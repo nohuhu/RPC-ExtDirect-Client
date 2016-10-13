@@ -1,3 +1,7 @@
+1.25  Thu Oct 13 00:00:17 PDT 2016
+    - Another attempt at solving mysterious CPAN smoker failures in 05_upload.t
+    - Updated dependencies on core modules
+
 1.24  Wed Oct 12 22:02:14 PDT 2016
     - Added a client option to specify connection protocol other than HTTP
     - Connection timeout in unit tests lowered to 1 second
