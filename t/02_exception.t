@@ -12,6 +12,8 @@ use RPC::ExtDirect::Test::Pkg::Meta;
 
 use lib 't/lib';
 use test::class;
+
+use RPC::ExtDirect::Test::Util;
 use RPC::ExtDirect::Client::Test::Util;
 
 my $tests = eval do { local $/; <DATA>; }           ## no critic
@@ -31,7 +33,7 @@ my $client = eval { $cclass->new( host => $host, port => $port, timeout => 1, ) 
 
 is     $@,      '',      "Didn't die";
 ok     $client,          'Got client object';
-isa_ok $client, $cclass, 'Right object, too,';
+ref_ok $client, $cclass, 'Right object, too,';
 
 # maybe_start_server will leave arguments it doesn't know about
 my %run_only = map { $_ => 1 } @ARGV;

@@ -46,15 +46,15 @@ my $client = eval {
 
 is     $@,      '',      "Constructor eval $@";
 ok     $client,          "Got object";
-isa_ok $client, $cclass, "Client object";
+ref_ok $client, $cclass, "Client object";
 
 my $remoting_api = $client->get_api('remoting');
 
-isa_ok $remoting_api, $aclass, "Remoting API object";
+ref_ok $remoting_api, $aclass, "Remoting API object";
 
 my $polling_api = $client->get_api('polling');
 
-isa_ok $polling_api, $aclass, "Polling API object";
+ref_ok $polling_api, $aclass, "Polling API object";
 
 # Finally start the server and run some calls
 my ($host, $port) = maybe_start_server(static_dir => 't/htdocs');

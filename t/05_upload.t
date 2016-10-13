@@ -29,7 +29,7 @@ my $client = eval { $cclass->new( host => $host, port => $port, timeout => 1, ) 
 
 is     $@,      '',      "Didn't die";
 ok     $client,          'Got client object';
-isa_ok $client, $cclass, 'Right object, too,';
+ref_ok $client, $cclass, 'Right object, too,';
 
 # Generate some files with some random data
 my @files = map { gen_file() } 0 .. int rand 9;

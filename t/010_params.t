@@ -51,7 +51,7 @@ $client = eval {
 
 is     $@,      '',      "Constructor eval $@";
 ok     $client,          "Got object";
-isa_ok $client, $cclass, "Client object";
+ref_ok $client, $cclass, "Client object";
 
 %uris = (
     api => 'https://localhost:4884/extdirectapi',

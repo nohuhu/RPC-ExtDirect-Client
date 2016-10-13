@@ -60,7 +60,7 @@ my $api = eval {
 
 is     $@,   '',      "Constructor eval $@";
 ok     $api,          'Got object';
-isa_ok $api, $aclass, 'Right object, too,';
+ref_ok $api, $aclass, 'Right object, too,';
 
 is $api->type, 'remoting',         'Type';
 is $api->url,  '/extdirectrouter', 'URL';
@@ -154,6 +154,6 @@ my $action = $api->actions('Bar');
 my $act_class = 'RPC::ExtDirect::API::Action';
 
 ok     $action,                   'Got single action object';
-isa_ok $action,       $act_class, 'Right single action object class, too,';
+ref_ok $action,       $act_class, 'Right single action object class, too,';
 is     $action->name, 'Bar',      'Single action name';
 
