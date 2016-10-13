@@ -19,6 +19,18 @@ use RPC::ExtDirect::Client;
 # Clean up %ENV so that HTTP::Tiny does not accidentally connect to a proxy
 clean_env;
 
+# CGI::Simple has uploads disabled by default; maybe this is what causes
+# massive failures in CPAN testers?
+eval {
+    no warnings 'once';
+
+    require CGI;
+    $CGI::DISABLE_UPLOADS = 0;
+
+    require CGI::Simple;
+    $CGI::Simple::DISABLE_UPLOADS = 0;
+};
+
 # Host/port in @ARGV means there's server listening elsewhere
 my ($host, $port) = maybe_start_server(static_dir => 't/htdocs');
 ok $port, "Got host: $host and port: $port";
