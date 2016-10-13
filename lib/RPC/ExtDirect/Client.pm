@@ -25,7 +25,7 @@ croak __PACKAGE__." requires RPC::ExtDirect 3.0+"
 # Module version
 #
 
-our $VERSION = '1.20';
+our $VERSION = '1.21';
 
 ### PUBLIC CLASS METHOD (CONSTRUCTOR) ###
 #
@@ -58,7 +58,7 @@ sub new {
             if exists $params{ $key };
     }
     
-    my @our_params = qw/ host port cv cookies api_cb /;
+    my @our_params = qw/ host port proto cv cookies api_cb /;
     
     @$self{ @our_params } = delete @params{ @our_params };
     
@@ -200,7 +200,7 @@ sub transaction_class { 'RPC::ExtDirect::Client::Transaction' }
 #
 
 RPC::ExtDirect::Util::Accessor->mk_accessor(
-    simple => [qw/ config host port cv cookies http_params api_cb /],
+    simple => [qw/ config host port proto cv cookies http_params api_cb /],
 );
 
 ############## PRIVATE METHODS BELOW ##############
@@ -395,6 +395,7 @@ sub _get_uri {
             unless $api;
     }
     
+    my $proto = $self->proto || 'http';
     my $host = $self->host;
     my $port = $self->port;
 
@@ -404,10 +405,10 @@ sub _get_uri {
              :                       die ["Unknown type $type"]
              ;
 
-    $path   =~ s{^/}{};
+    $path    =~ s{^/}{};
 
-    my $uri  = $port ? "http://$host:$port/$path"
-             :         "http://$host/$path"
+    my $uri  = $port ? "$proto://$host:$port/$path"
+             :         "$proto://$host/$path"
              ;
 
     return $uri;
@@ -566,6 +567,17 @@ sub _sync_request {
     
     my $transport = $transport_class->new(%$http_params);
     my $response  = $transport->request($method, $uri, $request_options);
+    
+    # By Ext.Direct spec that shouldn't even happen; however the transport
+    # may crap out or something else might cause a failed request.
+    # Status code 599 is internal for HTTP::Tiny, with the error message
+    # placed in the response content.
+    if (!$response->{success}) {
+        my $err = $response->{status} == 599 ? $response->{content}
+                :                              $response->{status}
+                ;
+        die ["Ext.Direct request unsuccessful: $err"];
+    }
     
     return $self->$handle($response, $transaction);
 }
@@ -841,12 +853,6 @@ sub _merge_params {
 sub _handle_call_response {
     my ($self, $resp) = @_;
     
-    # By Ext.Direct spec that shouldn't even happen, but then again
-    die ["Ext.Direct request unsuccessful: $resp->{status}"]
-        unless $resp->{success};
-    
-    die [$resp->{content}] if $resp->{status} > 500;
-    
     my $content = $self->_decode_response_body( $resp->{content} );
     
     return $self->_exception($content)
@@ -864,9 +870,6 @@ sub _handle_call_response {
 
 sub _handle_poll_response {
     my ($self, $resp) = @_;
-
-    die ["Ext.Direct request unsuccessful: $resp->{status}"]
-        unless $resp->{success};
 
     # JSON->decode can die()
     my $ev = $self->_decode_response_body( $resp->{content} );

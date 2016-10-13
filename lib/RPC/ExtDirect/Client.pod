@@ -176,6 +176,11 @@ Server's host name or IP address. This parameter is mandatory.
 Optional port number to use when connecting to the server. Defaults to
 C<80>.
 
+=item C<proto>
+
+Optional protocol to use when connecting to the server. Defaults to
+C<http>.
+
 =item C<cookies>
 
 Cookies to set when calling server side; can be either L<HTTP::Cookies>
@@ -452,7 +457,7 @@ issue fixed.
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (c) 2012-2015 Alex Tokarev E<lt>tokarev@cpan.orgE<gt>.
+Copyright (c) 2012-2016 Alex Tokarev E<lt>tokarev@cpan.orgE<gt>.
 
 This module is free software; you can redistribute it and/or modify it
 under the same terms as Perl itself. See L<perlartistic>.
